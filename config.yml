@@ -1,0 +1,23 @@
+drives:
+  - "/mnt/c"
+#  - "/mnt/d"
+#  - "/mnt/e"
+
+scan_filters:
+  exclude_folders:
+    - ".git"
+    - "node_modules"
+    - "__pycache__"
+
+  exclude_extensions:
+    - ".tmp"
+    - ".log"
+
+  min_file_size: 0        # bytes
+  max_file_size: null      # null = no limit
+analysis:
+  similarity_threshold: 0.9
+  comparison_mode: "tree"  # "tree" or "folder"
+database:
+  path: "file_index.db"
+
