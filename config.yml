@@ -1,5 +1,6 @@
-drives:
-  - "/mnt/c"
+folders:
+  - "/tmp/test_scan/"
+#  - "/mnt/c"
 #  - "/mnt/d"
 #  - "/mnt/e"
 
@@ -19,5 +20,5 @@ analysis:
   similarity_threshold: 0.9
   comparison_mode: "tree"  # "tree" or "folder"
 database:
-  path: "file_index.db"
+  path: "/tmp/test_index.db"
 

@@ -14,7 +14,7 @@ class FileDB:
 
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        self.conn = sqlite3.connect(str(self.db_path))
+        self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
 
         self.conn.execute("PRAGMA journal_mode=WAL")
 
@@ -64,6 +64,38 @@ class FileDB:
 
                 FOREIGN KEY (folder_id) REFERENCES folders(id)
 
+            );
+            CREATE TABLE IF NOT EXISTS similarity_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                folder_a_id INTEGER NOT NULL,
+                folder_b_id INTEGER NOT NULL,
+                jaccard_score REAL NOT NULL,
+                shared_count INTEGER NOT NULL,
+		threshold_used REAL NOT NULL,
+                created_at TIMESTAMP NOT NULL,
+                FOREIGN KEY (folder_a_id) REFERENCES folders(id),
+                FOREIGN KEY (folder_b_id) REFERENCES folders(id),
+                UNIQUE (folder_a_id, folder_b_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS file_matches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                result_id INTEGER NOT NULL,
+                file_a_id INTEGER NOT NULL,
+                file_b_id INTEGER NOT NULL,
+                quick_hash_match BOOLEAN,
+                full_hash_match BOOLEAN,
+                FOREIGN KEY (result_id) REFERENCES similarity_results(id),
+                FOREIGN KEY (file_a_id) REFERENCES files(id),
+                FOREIGN KEY (file_b_id) REFERENCES files(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS file_hashes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_id INTEGER NOT NULL UNIQUE,
+                quick_hash TEXT,
+                full_hash TEXT,
+                FOREIGN KEY (file_id) REFERENCES files(id)
             );
 
             CREATE INDEX IF NOT EXISTS idx_files_folder ON files(folder_id);

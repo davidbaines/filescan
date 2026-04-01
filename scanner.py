@@ -56,20 +56,20 @@ class Scanner:
         return subdirs
 
     def scan(self):
-        "Scan all configured drives using threaded IO"
+        "Scan the top level folders specified using threaded IO"
 
-        for drive in self.cfg["drives"]:
-            root = Path(drive)
-            if not root.exists():
-                print(f"Skipping {drive} - not found")
+        for top_folder in self.cfg["folders"]:
+            root = Path(top_folder)
+            if not root.is_dir():
+                print(f"Skipping {top_folder}: not found")
                 continue
 
-            print(f"Scanning {drive}...")
+            print(f"Scanning {top_folder}")
             queue = [(root, 0)]
             with ThreadPoolExecutor(max_workers=8) as pool:
                 while queue:
                     futures = {
-                        pool.submit(self._index_folder, folder, drive, depth): (
+                        pool.submit(self._index_folder, folder, top_folder, depth): (
                             folder,
                             depth,
                         )
@@ -81,5 +81,5 @@ class Scanner:
                         subdirs = fut.result()
                         parent_depth = futures[fut][1]
                         queue.extend((sd, parent_depth + 1) for sd in subdirs)
-            print(f"Done scanning {drive}")
+            print(f"Done scanning {top_folder}")
         self.db.close()
