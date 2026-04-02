@@ -14,7 +14,7 @@ class FileDB:
 
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+        self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False, isolation_level=None)
 
         self.conn.execute("PRAGMA journal_mode=WAL")
 
