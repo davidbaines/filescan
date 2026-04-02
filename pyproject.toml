@@ -1,23 +1,18 @@
-[project]
+[tool.poetry]
 name = "filescan"
 version = "0.1.0"
 description = ""
-authors = [
-    {name = "David Baines",email = "davidcbaines@gmail.com"}
-]
-requires-python = ">=3.12"
-dependencies = [
-    "flake8 (>=7.3.0,<8.0.0)",
-    "pyyaml (>=6.0.3,<7.0.0)",
-    "xxhash (>=3.6.0,<4.0.0)"
-]
+authors = ["David Baines <davidcbaines@gmail.com>"]
 
-[dependency-groups]
-dev = [
-    "isort (>=8.0.1,<9.0.0)",
-    "black (>=26.3.1,<27.0.0)"
-]
+[tool.poetry.dependencies]
+python = ">=3.10"
+pyyaml = ">=6.0.3,<7.0.0"
+xxhash = ">=3.6.0,<4.0.0"
 
+[tool.poetry.dev-dependencies]
+flake8 = ">=7.3.0,<8.0.0"
+isort = ">=8.0.1,<9.0.0"
+black = ">=26.3.1,<27.0.0"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
