@@ -170,6 +170,9 @@ class FileDB:
 
 
 
-    def commit(self): self.conn.commit()
+    def commit(self):
+        try:  self.conn.commit()
+        except sqlite3.OperationalError: pass
+
 
     def close(self): self.conn.close()
