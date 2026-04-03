@@ -1,6 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import yaml
+from tqdm import tqdm
 from database import FileDB
 
 class Scanner:
@@ -40,19 +41,19 @@ class Scanner:
         return files, subdirs
 
     def _index_folder(self, folder, drive, depth):
+        try: folder_mtime = folder.stat().st_mtime
+        except PermissionError: return []
         files, subdirs = self._scan_folder(folder, drive)
-        total_bytes = sum(f.stat().st_size for f in files)
-        self.db.upsert_folder(str(folder), drive, len(files), total_bytes, depth)
-        self.db.commit()
-        fid = self.db.get_folder_id(str(folder))
-        for f in files:
-            st = f.stat()
-            if self.db.needs_rescan(str(f), st.st_mtime):
-                self.db.upsert_file(
-                    fid, f.name, str(f), st.st_size, st.st_mtime, st.st_ctime
-                )
-
-        self.db.commit()
+        if not self.db.folder_unchanged(str(folder), folder_mtime):
+            total_bytes = sum(f.stat().st_size for f in files)
+            self.db.upsert_folder(str(folder), drive, len(files), total_bytes, depth, folder_mtime)
+            self.db.commit()
+            fid = self.db.get_folder_id(str(folder))
+            for f in files:
+                st = f.stat()
+                if self.db.needs_rescan(str(f), st.st_mtime):
+                    self.db.upsert_file(fid, f.name, str(f), st.st_size, st.st_mtime, st.st_ctime)
+            self.db.commit()
         return subdirs
 
     def scan(self):
@@ -66,20 +67,19 @@ class Scanner:
 
             print(f"Scanning {top_folder}")
             queue = [(root, 0)]
+            pbar = tqdm(desc="  Folders", unit="dir")
             with ThreadPoolExecutor(max_workers=8) as pool:
                 while queue:
                     futures = {
-                        pool.submit(self._index_folder, folder, top_folder, depth): (
-                            folder,
-                            depth,
-                        )
+                        pool.submit(self._index_folder, folder, top_folder, depth): (folder, depth)
                         for folder, depth in queue
                     }
-
                     queue = []
                     for fut in as_completed(futures):
+                        pbar.update(1)
                         subdirs = fut.result()
                         parent_depth = futures[fut][1]
                         queue.extend((sd, parent_depth + 1) for sd in subdirs)
+            pbar.close()
             print(f"Done scanning {top_folder}")
         self.db.close()

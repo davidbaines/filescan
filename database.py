@@ -42,7 +42,11 @@ class FileDB:
 
                 depth INTEGER DEFAULT 0,
 
-                last_scanned TIMESTAMP
+                mtime REAL,
+
+                last_scanned TIMESTAMP,
+
+                last_analysed TIMESTAMP
 
             );
 
@@ -110,23 +114,23 @@ class FileDB:
 
 
 
-    def upsert_folder(self, path, drive, file_count, total_bytes, depth):
+    def upsert_folder(self, path, drive, file_count, total_bytes, depth, mtime=None):
 
         "Insert or update a folder record"
 
         self.conn.execute(
 
-            """INSERT INTO folders (path, drive, file_count, total_bytes, depth, last_scanned)
+            """INSERT INTO folders (path, drive, file_count, total_bytes, depth, mtime, last_scanned)
 
-               VALUES (?, ?, ?, ?, ?, datetime('now'))
+               VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
 
                ON CONFLICT(path) DO UPDATE SET
 
                file_count=excluded.file_count, total_bytes=excluded.total_bytes,
 
-               depth=excluded.depth, last_scanned=excluded.last_scanned""",
+               depth=excluded.depth, mtime=excluded.mtime, last_scanned=excluded.last_scanned""",
 
-            (str(path), drive, file_count, total_bytes, depth))
+            (str(path), drive, file_count, total_bytes, depth, mtime))
 
 
 
@@ -174,5 +178,21 @@ class FileDB:
         try:  self.conn.commit()
         except sqlite3.OperationalError: pass
 
+
+    def folder_unchanged(self, path, mtime):
+        "Check if folder exists in DB with same mtime"
+        row = self.conn.execute("SELECT mtime FROM folders WHERE path=?", (str(path),)).fetchone()
+        return row is not None and row[0] == mtime
+
+    def get_dirty_folder_ids(self):
+        "Get folder IDs where last_scanned > last_analysed or never analysed"
+        return {r[0] for r in self.conn.execute(
+            "SELECT id FROM folders WHERE last_analysed IS NULL OR last_scanned > last_analysed").fetchall()}
+
+    def mark_analysed(self, folder_ids):
+        "Update last_analysed for given folder IDs"
+        for fid in folder_ids:
+            self.conn.execute("UPDATE folders SET last_analysed=datetime('now') WHERE id=?", (fid,))
+        self.commit()
 
     def close(self): self.conn.close()
