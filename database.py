@@ -200,6 +200,54 @@ class FileDB:
             )
         self.commit()
 
+    def get_candidate_file_pairs(self):
+        "Get file pairs from similar folders with matching (filename, size)"
+        return self.conn.execute(
+            """SELECT sr.id, fa.id, fb.id, fa.path, fb.path, fa.filename, fa.size
+               FROM similarity_results sr
+               JOIN files fa ON fa.folder_id = sr.folder_a_id
+               JOIN files fb ON fb.folder_id = sr.folder_b_id
+               WHERE fa.filename = fb.filename AND fa.size = fb.size
+               AND NOT EXISTS (SELECT 1 FROM file_matches fm
+                   WHERE fm.result_id = sr.id AND fm.file_a_id = fa.id AND fm.file_b_id = fb.id)"""
+        ).fetchall()
+
+    def get_hash(self, file_id):
+        "Get stored hashes for a file, or None"
+        return self.conn.execute(
+            "SELECT quick_hash, full_hash FROM file_hashes WHERE file_id=?", (file_id,)
+        ).fetchone()
+
+    def upsert_hash(self, file_id, quick_hash=None, full_hash=None):
+        "Insert or update hash for a file"
+        existing = self.get_hash(file_id)
+        if existing is None:
+            self.conn.execute(
+                "INSERT INTO file_hashes (file_id, quick_hash, full_hash) VALUES (?, ?, ?)",
+                (file_id, quick_hash, full_hash),
+            )
+        else:
+            if quick_hash:
+                self.conn.execute(
+                    "UPDATE file_hashes SET quick_hash=? WHERE file_id=?",
+                    (quick_hash, file_id),
+                )
+            if full_hash:
+                self.conn.execute(
+                    "UPDATE file_hashes SET full_hash=? WHERE file_id=?",
+                    (full_hash, file_id),
+                )
+
+    def insert_file_match(
+        self, result_id, file_a_id, file_b_id, quick_match, full_match
+    ):
+        "Record a file match result"
+        self.conn.execute(
+            "INSERT INTO file_matches (result_id, file_a_id, file_b_id, quick_hash_match, full_hash_match) VALUES (?,?,?,?,?)",
+            (result_id, file_a_id, file_b_id, quick_match, full_match),
+        )
+
+
     def upsert_scan_stats(self, folder_root, total_folders, total_files, scanned_folders, scanned_files):
         self.conn.execute(
             """INSERT INTO scan_stats (folder_root, total_folders, total_files, scanned_folders, scanned_files, last_scanned)
@@ -208,7 +256,15 @@ class FileDB:
                total_folders=excluded.total_folders, total_files=excluded.total_files,
                scanned_folders=excluded.scanned_folders, scanned_files=excluded.scanned_files,
                last_scanned=excluded.last_scanned""",
-            (str(folder_root), total_folders, total_files, scanned_folders, scanned_files))
+            (
+                str(folder_root),
+                total_folders,
+                total_files,
+                scanned_folders,
+                scanned_files,
+            ),
+        )
         self.commit()
 
-    def close(self): self.conn.close()
+    def close(self):
+        self.conn.close()
