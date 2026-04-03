@@ -28,38 +28,32 @@ class Scanner:
         return False
 
     def _scan_folder(self, folder, drive):
-        try:
-            entries = list(folder.iterdir())
-        except PermissionError:
-            return [], []
-        files, subdirs = [], []
-        for p in entries:
-            if p.is_dir() and not self._excluded_folder(p):
-                subdirs.append(p)
-
-            elif p.is_file() and not self._excluded_file(p):
-                files.append(p)
-        return files, subdirs
+        try: entries = list(folder.iterdir())
+        except PermissionError: return [], [], 0, 0
+        all_dirs = [p for p in entries if p.is_dir()]
+        all_files = [p for p in entries if p.is_file()]
+        subdirs = [p for p in all_dirs if not self._excluded_folder(p)]
+        files = [p for p in all_files if not self._excluded_file(p)]
+        return files, subdirs, len(all_dirs), len(all_files)
 
     def _index_folder(self, folder, drive, depth):
-        files, subdirs = self._scan_folder(folder, drive)
-        total_bytes = sum(f.stat().st_size for f in files)
-        self.db.upsert_folder(str(folder), drive, len(files), total_bytes, depth)
-        self.db.commit()
-        fid = self.db.get_folder_id(str(folder))
-        for f in files:
-            st = f.stat()
-            if self.db.needs_rescan(str(f), st.st_mtime):
-                self.db.upsert_file(
-                    fid, f.name, str(f), st.st_size, st.st_mtime, st.st_ctime
-                )
-
-        self.db.commit()
-        return subdirs
+        try: folder_mtime = folder.stat().st_mtime
+        except PermissionError: return [], 0, 0, 0
+        files, subdirs, raw_dirs, raw_files = self._scan_folder(folder, drive)
+        if not self.db.folder_unchanged(str(folder), folder_mtime):
+            total_bytes = sum(f.stat().st_size for f in files)
+            self.db.upsert_folder(str(folder), drive, len(files), total_bytes, depth, folder_mtime)
+            self.db.commit()
+            fid = self.db.get_folder_id(str(folder))
+            for f in files:
+                st = f.stat()
+                if self.db.needs_rescan(str(f), st.st_mtime):
+                    self.db.upsert_file(fid, f.name, str(f), st.st_size, st.st_mtime, st.st_ctime)
+            self.db.commit()
+        return subdirs, raw_dirs, raw_files, len(files)
 
     def scan(self):
         "Scan the top level folders specified using threaded IO"
-
         for top_folder in self.cfg["folders"]:
             root = Path(top_folder)
             if not root.is_dir():
@@ -68,22 +62,22 @@ class Scanner:
 
             print(f"Scanning {top_folder}")
             queue = [(root, 0)]
+            total_dirs, total_files, scanned_dirs, scanned_files = 1, 0, 0, 0
             pbar = tqdm(desc="  Folders", unit="dir")
             with ThreadPoolExecutor(max_workers=8) as pool:
                 while queue:
-                    futures = {
-                        pool.submit(self._index_folder, folder, top_folder, depth): (
-                            folder,
-                            depth,
-                        )
-                        for folder, depth in queue
-                    }
+                    futures = {pool.submit(self._index_folder, folder, top_folder, depth): (folder, depth) for folder, depth in queue}
                     queue = []
                     for fut in as_completed(futures):
                         pbar.update(1)
-                        subdirs = fut.result()
+                        subdirs, raw_dirs, raw_files, filtered_files = fut.result()
+                        scanned_dirs += 1
+                        scanned_files += filtered_files
+                        total_dirs += raw_dirs
+                        total_files += raw_files
                         parent_depth = futures[fut][1]
                         queue.extend((sd, parent_depth + 1) for sd in subdirs)
             pbar.close()
-            print(f"Done scanning {top_folder}")
+            self.db.upsert_scan_stats(top_folder, total_dirs, total_files, scanned_dirs, scanned_files)
+            print(f"Done scanning {top_folder}: {total_dirs} total dirs, {total_files} total files")
         self.db.close()

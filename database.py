@@ -99,6 +99,16 @@ class FileDB:
                 FOREIGN KEY (file_id) REFERENCES files(id)
             );
 
+            CREATE TABLE IF NOT EXISTS scan_stats (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                folder_root TEXT UNIQUE NOT NULL,
+                total_folders INTEGER DEFAULT 0,
+                total_files INTEGER DEFAULT 0,
+                scanned_folders INTEGER DEFAULT 0,
+                scanned_files INTEGER DEFAULT 0,
+                last_scanned TIMESTAMP
+            );
+
             CREATE INDEX IF NOT EXISTS idx_files_folder ON files(folder_id);
 
             CREATE INDEX IF NOT EXISTS idx_files_name_size ON files(filename, size);
@@ -190,5 +200,15 @@ class FileDB:
             )
         self.commit()
 
-    def close(self):
-        self.conn.close()
+    def upsert_scan_stats(self, folder_root, total_folders, total_files, scanned_folders, scanned_files):
+        self.conn.execute(
+            """INSERT INTO scan_stats (folder_root, total_folders, total_files, scanned_folders, scanned_files, last_scanned)
+               VALUES (?, ?, ?, ?, ?, datetime('now'))
+               ON CONFLICT(folder_root) DO UPDATE SET
+               total_folders=excluded.total_folders, total_files=excluded.total_files,
+               scanned_folders=excluded.scanned_folders, scanned_files=excluded.scanned_files,
+               last_scanned=excluded.last_scanned""",
+            (str(folder_root), total_folders, total_files, scanned_folders, scanned_files))
+        self.commit()
+
+    def close(self): self.conn.close()

@@ -1,6 +1,6 @@
 import yaml
 from pathlib import Path
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from database import FileDB
 
 
@@ -11,14 +11,21 @@ class Reporter:
         self.db = FileDB(self.cfg["database"]["path"])
 
     def _summary_data(self):
-        ex = lambda q: self.db.conn.execute(q).fetchone()[0]
-        return [
-            ("Total files", ex("SELECT COUNT(*) FROM files")),
-            ("Total folders", ex("SELECT COUNT(*) FROM folders")),
-            ("Similar folder pairs", ex("SELECT COUNT(*) FROM similarity_results")),
-            ("Confirmed duplicate files", ex("SELECT COUNT(*) FROM file_matches WHERE full_hash_match=1")),
-            ("Reclaimable GB", round((ex("SELECT COALESCE(SUM(f.size),0) FROM file_matches fm JOIN files f ON fm.file_a_id=f.id WHERE fm.full_hash_match=1") or 0) / 1e9, 2)),
-        ]
+        rows = self.db.conn.execute(
+            """SELECT ss.folder_root, ss.total_folders, ss.total_files, ss.scanned_folders, ss.scanned_files,
+                      (SELECT COUNT(*) FROM similarity_results sr
+                       JOIN folders da ON sr.folder_a_id = da.id
+                       WHERE da.path LIKE ss.folder_root || '%'),
+                      (SELECT COUNT(*) FROM file_matches fm
+                       JOIN files f ON fm.file_a_id = f.id
+                       JOIN folders d ON f.folder_id = d.id
+                       WHERE fm.full_hash_match = 1 AND d.path LIKE ss.folder_root || '%'),
+                      (SELECT COALESCE(SUM(f.size), 0) / 1e9 FROM file_matches fm
+                       JOIN files f ON fm.file_a_id = f.id
+                       JOIN folders d ON f.folder_id = d.id
+                       WHERE fm.full_hash_match = 1 AND d.path LIKE ss.folder_root || '%')
+               FROM scan_stats ss""").fetchall()
+        return rows
 
     def _duplicate_files_data(self):
         hdrs = ["file_a", "file_b", "filename", "size_bytes", "folder_a", "folder_b", "folder_similarity"]
@@ -49,25 +56,40 @@ class Reporter:
         return hdrs, rows
 
     def _write_sheet(self, ws, hdrs, rows):
+        for row in ws.iter_rows(min_row=1, max_row=ws.max_row): 
+            for cell in row: cell.value = None
+        ws.delete_rows(1, ws.max_row)
         ws.append(hdrs)
         for r in rows: ws.append(list(r))
 
-    def run(self, out_path="filescan_report.xlsx"):
-        wb = Workbook()
+    def _get_or_create_sheet(self, wb, name):
+        if name in wb.sheetnames: return wb[name]
+        return wb.create_sheet(name)
 
-        ws_sum = wb.active
-        ws_sum.title = "Summary"
-        self._write_sheet(ws_sum, ["Metric", "Value"], self._summary_data())
+    def run(self, out_path="filescan_report.xlsx"):
+        if Path(out_path).exists():
+            wb = load_workbook(out_path)
+        else:
+            wb = Workbook()
+            wb.active.title = "Summary"
+
+        sum_hdrs = ["Folder", "Total Folders", "Total Files", "Scanned Folders", "Scanned Files",
+                     "Similar Folder Pairs", "Duplicate Files", "Duplicate GB"]
+        sum_rows = self._summary_data()
+        ws_sum = self._get_or_create_sheet(wb, "Summary")
+        self._write_sheet(ws_sum, sum_hdrs, sum_rows)
 
         hdrs, rows = self._duplicate_files_data()
-        self._write_sheet(wb.create_sheet("Duplicate Files"), hdrs, rows)
+        ws_dup = self._get_or_create_sheet(wb, "Duplicate Files")
+        self._write_sheet(ws_dup, hdrs, rows)
         total_dup_bytes = sum(r[3] for r in rows)
 
         hdrs, rows = self._similar_folders_data()
-        self._write_sheet(wb.create_sheet("Similar Folders"), hdrs, rows)
+        ws_sim = self._get_or_create_sheet(wb, "Similar Folders")
+        self._write_sheet(ws_sim, hdrs, rows)
 
         wb.save(out_path)
-        print(f"Duplicate files: {len(rows)} folder pairs")
-        print(f"Reclaimable: {total_dup_bytes/1e9:.2f} GB")
+        print(f"Summary: {len(sum_rows)} folder roots")
+        print(f"Duplicate files: {total_dup_bytes/1e9:.2f} GB reclaimable")
         print(f"Written to {out_path}")
         self.db.close()
