@@ -3,18 +3,17 @@ import sqlite3
 from pathlib import Path
 
 
-
 class FileDB:
-
     "SQLite database for file indexing and duplicate analysis"
 
     def __init__(self, db_path):
-
         self.db_path = Path(db_path)
 
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False, isolation_level=None)
+        self.conn = sqlite3.connect(
+            str(self.db_path), check_same_thread=False, isolation_level=None
+        )
 
         self.conn.execute("PRAGMA journal_mode=WAL")
 
@@ -22,11 +21,9 @@ class FileDB:
 
         self._create_tables()
 
-
-
     def _create_tables(self):
-
-        self.conn.executescript("""
+        self.conn.executescript(
+            """
 
             CREATE TABLE IF NOT EXISTS folders (
 
@@ -42,7 +39,11 @@ class FileDB:
 
                 depth INTEGER DEFAULT 0,
 
-                last_scanned TIMESTAMP
+                mtime REAL,
+
+                last_scanned TIMESTAMP,
+
+                last_analysed TIMESTAMP
 
             );
 
@@ -104,38 +105,31 @@ class FileDB:
 
             CREATE INDEX IF NOT EXISTS idx_folders_drive ON folders(drive);
 
-        """)
+        """
+        )
 
         self.conn.commit()
 
-
-
-    def upsert_folder(self, path, drive, file_count, total_bytes, depth):
-
+    def upsert_folder(self, path, drive, file_count, total_bytes, depth, mtime=None):
         "Insert or update a folder record"
 
         self.conn.execute(
+            """INSERT INTO folders (path, drive, file_count, total_bytes, depth, mtime, last_scanned)
 
-            """INSERT INTO folders (path, drive, file_count, total_bytes, depth, last_scanned)
-
-               VALUES (?, ?, ?, ?, ?, datetime('now'))
+               VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
 
                ON CONFLICT(path) DO UPDATE SET
 
                file_count=excluded.file_count, total_bytes=excluded.total_bytes,
 
-               depth=excluded.depth, last_scanned=excluded.last_scanned""",
-
-            (str(path), drive, file_count, total_bytes, depth))
-
-
+               depth=excluded.depth, mtime=excluded.mtime, last_scanned=excluded.last_scanned""",
+            (str(path), drive, file_count, total_bytes, depth, mtime),
+        )
 
     def upsert_file(self, folder_id, filename, path, size, mtime, ctime):
-
         "Insert or update a file record"
 
         self.conn.execute(
-
             """INSERT INTO files (folder_id, filename, path, size, mtime, ctime)
 
                VALUES (?, ?, ?, ?, ?, ?)
@@ -145,34 +139,56 @@ class FileDB:
                folder_id=excluded.folder_id, filename=excluded.filename,
 
                size=excluded.size, mtime=excluded.mtime, ctime=excluded.ctime""",
-
-            (folder_id, filename, str(path), size, mtime, ctime))
-
-
+            (folder_id, filename, str(path), size, mtime, ctime),
+        )
 
     def get_folder_id(self, path):
-
         "Get folder id by path, or None"
 
-        row = self.conn.execute("SELECT id FROM folders WHERE path=?", (str(path),)).fetchone()
+        row = self.conn.execute(
+            "SELECT id FROM folders WHERE path=?", (str(path),)
+        ).fetchone()
 
         return row[0] if row else None
 
-
-
     def needs_rescan(self, path, mtime):
-
         "Check if file needs rescanning based on mtime"
 
-        row = self.conn.execute("SELECT mtime FROM files WHERE path=?", (str(path),)).fetchone()
+        row = self.conn.execute(
+            "SELECT mtime FROM files WHERE path=?", (str(path),)
+        ).fetchone()
 
         return row is None or row[0] < mtime
 
-
-
     def commit(self):
-        try:  self.conn.commit()
-        except sqlite3.OperationalError: pass
+        try:
+            self.conn.commit()
+        except sqlite3.OperationalError:
+            pass
 
+    def folder_unchanged(self, path, mtime):
+        "Check if folder exists in DB with same mtime"
+        row = self.conn.execute(
+            "SELECT mtime FROM folders WHERE path=?", (str(path),)
+        ).fetchone()
+        return row is not None and row[0] == mtime
 
-    def close(self): self.conn.close()
+    def get_dirty_folder_ids(self):
+        "Get folder IDs where last_scanned > last_analysed or never analysed"
+        return {
+            r[0]
+            for r in self.conn.execute(
+                "SELECT id FROM folders WHERE last_analysed IS NULL OR last_scanned > last_analysed"
+            ).fetchall()
+        }
+
+    def mark_analysed(self, folder_ids):
+        "Update last_analysed for given folder IDs"
+        for fid in folder_ids:
+            self.conn.execute(
+                "UPDATE folders SET last_analysed=datetime('now') WHERE id=?", (fid,)
+            )
+        self.commit()
+
+    def close(self):
+        self.conn.close()

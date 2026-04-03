@@ -4,6 +4,7 @@ import yaml
 from tqdm import tqdm
 from database import FileDB
 
+
 class Scanner:
     "Scan drives for files and index them into the database"
 
@@ -71,7 +72,10 @@ class Scanner:
             with ThreadPoolExecutor(max_workers=8) as pool:
                 while queue:
                     futures = {
-                        pool.submit(self._index_folder, folder, top_folder, depth): (folder, depth)
+                        pool.submit(self._index_folder, folder, top_folder, depth): (
+                            folder,
+                            depth,
+                        )
                         for folder, depth in queue
                     }
                     queue = []

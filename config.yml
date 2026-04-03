@@ -1,5 +1,5 @@
 folders:
-  - "C:/Users/David/"
+  - "D:/Users/David/Documents"
 #  - "/mnt/c"
 #  - "/mnt/d"
 #  - "/mnt/e"
@@ -20,5 +20,5 @@ analysis:
   similarity_threshold: 0.8
   comparison_mode: "tree"  # "tree" or "folder"
 database:
-  path: "C:/Users/David/test_index.db"
+  path: "D:/Users/David/file_index.db"
 
