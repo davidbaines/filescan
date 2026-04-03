@@ -1,5 +1,5 @@
 folders:
-  - "/tmp/test_scan/"
+  - "C:/Users/David/"
 #  - "/mnt/c"
 #  - "/mnt/d"
 #  - "/mnt/e"
@@ -17,8 +17,8 @@ scan_filters:
   min_file_size: 0        # bytes
   max_file_size: null      # null = no limit
 analysis:
-  similarity_threshold: 0.6
+  similarity_threshold: 0.8
   comparison_mode: "tree"  # "tree" or "folder"
 database:
-  path: "/tmp/test_index.db"
+  path: "C:/Users/David/test_index.db"
 
