@@ -140,7 +140,9 @@ class Analyser:
                 seq=",".join(str(d) for d in dirty_ids)
             )
         )
+        valid_ids = set(folders.keys())
         for a, b, score, shared in results:
+            if a not in valid_ids or b not in valid_ids: continue
             self.db.conn.execute(
                 """INSERT OR REPLACE INTO similarity_results
                    (folder_a_id, folder_b_id, jaccard_score, shared_count, threshold_used, created_at)
