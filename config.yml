@@ -1,7 +1,7 @@
 folders:
   - "/tmp/test_scan/"
-#  - "/mnt/c"
-#  - "/mnt/d"
+  - "/home"
+  - "/root"
 #  - "/mnt/e"
 
 scan_filters:
