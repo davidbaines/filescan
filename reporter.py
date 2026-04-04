@@ -66,8 +66,8 @@ class Reporter:
         if name in wb.sheetnames: return wb[name]
         return wb.create_sheet(name)
 
-    def run(self, out_path="filescan_report.xlsx"):
-        if Path(out_path).exists():
+    def run(self, out_path=Path("filescan_report.xlsx")):
+        if out_path.exists():
             wb = load_workbook(out_path)
         else:
             wb = Workbook()
@@ -91,5 +91,5 @@ class Reporter:
         wb.save(out_path)
         print(f"Summary: {len(sum_rows)} folder roots")
         print(f"Duplicate files: {total_dup_bytes/1e9:.2f} GB reclaimable")
-        print(f"Written to {out_path}")
+        print(f"Written to {out_path.resolve()}")
         self.db.close()
