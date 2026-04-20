@@ -15,6 +15,7 @@ from filescan.reporting.largest_files import _fmt_size, find_large_files, run_la
 from filescan.reporting.xlsx import write_report
 from filescan.similarity.clusters import dump_clusters_json, find_clusters
 from filescan.similarity.folders import run_similarity
+from filescan.similarity.merge_review import run_merge_review
 from filescan.storage.db import validate_database_ready
 
 
@@ -53,6 +54,9 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("largest")
     clusters_parser = subparsers.add_parser("clusters", help="Debug: dump folder clusters as JSON.")
     clusters_parser.add_argument("--show-suppressed", action="store_true", help="Include hierarchy-suppressed clusters.")
+
+    merge_review_parser = subparsers.add_parser("merge-review", help="Interactive TUI to review and approve folder merge clusters.")
+    merge_review_parser.add_argument("--plan", type=Path, default=None, help="Path to plan artifact JSON (default: latest in filescan folder).")
     return parser
 
 
@@ -87,7 +91,9 @@ def _run_pipeline(config_path: Path, *, rescan: bool = False, replan: bool = Fal
     _stage_start("plan")
     artifact_path = build_plan_artifact(config_path, replan=replan)
     config = load_config(config_path)
-    proposal_count = len(load_plan_artifact(artifact_path).get("proposals", []))
+    _plan = load_plan_artifact(artifact_path)
+    proposal_count = len(_plan.get("proposals", []))
+    cluster_count = len(_plan.get("clusters", []))
     _stage_start("report")
     report_path = write_report(config_path)
     _stage_start("waste")
@@ -109,6 +115,7 @@ def _run_pipeline(config_path: Path, *, rescan: bool = False, replan: bool = Fal
         "duplicate_group_count": len(duplicate_groups),
         "similarity_candidate_count": len(similarity_candidates),
         "proposal_count": proposal_count,
+        "cluster_count": cluster_count,
         "plan_artifact": artifact_path,
         "report_path": report_path,
         "waste_candidate_count": len(waste_candidates),
@@ -123,7 +130,7 @@ def _print_run_summary(*, config: Path, resolved_config, results: dict[str, obje
     print(f"  scan: completed (scan_run_id={results['scan_run_id']})")
     print(f"  duplicates: completed ({results['duplicate_group_count']} duplicate groups)")
     print(f"  similarity: completed ({results['similarity_candidate_count']} candidates)")
-    print(f"  plan: completed ({results['proposal_count']} proposals)")
+    print(f"  plan: completed ({results['proposal_count']} proposals, {results['cluster_count']} clusters)")
     print("  report: completed")
     print(f"  waste: {results['waste_candidate_count']} candidates found")
     print(f"  largest: {results['large_file_count']} large files found")
@@ -188,6 +195,8 @@ def main(argv: list[str] | None = None) -> int:
         if not getattr(args, "show_suppressed", False):
             clusters = [c for c in clusters if not c.is_suppressed]
         print(dump_clusters_json(clusters))
+    elif args.command == "merge-review":
+        run_merge_review(args.config, plan_path=getattr(args, "plan", None))
     return 0
 
 

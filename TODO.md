@@ -5,10 +5,11 @@
 - [x] 3. AGENTS.md compliance audit — find and fix all rule violations in the codebase (run after Tasks 1 & 2 so new code is included)
 - [x] 4. Fix TypeError in `refresh.py` — `track()` called with unsupported `leave=False` kwarg
 - [x] 5. Duplicate folder merge — backend: clustering, hierarchy suppression, unique-file identification
-- [ ] 6. Duplicate folder merge — plan artifact extension (cluster-aware merge proposals in existing JSON schema)
-- [ ] 7. Duplicate folder merge — Textual TUI review (`filescan merge-review` command)
-- [ ] 8. Duplicate folder merge — execute pipeline update (cluster merges via existing ExecutionRunner)
-- [ ] 9. Implement a waste_file_size threshold so that small files are not reported.
+- [x] 6. Duplicate folder merge — plan artifact extension (cluster-aware merge proposals in existing JSON schema)
+- [x] 7. Duplicate folder merge — Textual TUI review (`filescan merge-review` command)
+- [x] 8. Duplicate folder merge — execute pipeline update (cluster merges via existing ExecutionRunner)
+- [x] 9. Implement a waste_file_size threshold so that small files are not reported.
+- [x] 10. Write README.md for the repository
 
 ---
 
@@ -217,18 +218,18 @@ after `filescan plan` via `filescan merge-review --plan path/to/plan.json`)
 │ Clusters                       │ Cluster Detail                              │
 │ ► [0.94] Reports        2.3GB  │ Score: 0.94 · 130 shared files              │
 │   [0.87] Archive 2023   800MB  │                                             │
-│   [0.91] Photos Backup  4.1GB  │ ★ MASTER  F:\Work\Reports                  │
-│   [0.88] Invoices       220MB  │   130 files · 2.3 GB                       │
-│   [0.72] Old Projects   1.2GB  │   3 files unique to master                 │
+│   [0.91] Photos Backup  4.1GB  │ * MASTER  F:\Work\Reports                   │
+│   [0.88] Invoices       220MB  │   130 files · 2.3 GB                        │
+│   [0.72] Old Projects   1.2GB  │   3 files unique to master                  │
 │                                │                                             │
-│                                │   COPY    G:\Backup\Reports                │
-│                                │   127 files · 2.2 GB                       │
-│                                │   0 files unique to copy                   │
+│                                │   COPY    G:\Backup\Reports                 │
+│                                │   127 files · 2.2 GB                        │
+│                                │   0 files unique to copy                    │
 │                                │                                             │
-│                                │ Unique files in master:                    │
-│                                │   report_final_v3.docx      2.1 MB        │
-│                                │   budget_2024.xlsx         41.0 MB        │
-│                                │   notes_confidential.txt    2 KB          │
+│                                │ Unique files in master:                     │
+│                                │   report_final_v3.docx      2.1 MB          │
+│                                │   budget_2024.xlsx         41.0 MB          │
+│                                │   notes_confidential.txt    2 KB            │
 └────────────────────────────────┴─────────────────────────────────────────────┘
   a:approve  r:reject  s:skip  m:cycle master  o:open in Explorer  q:save & quit
 ```
@@ -319,6 +320,47 @@ The user has added `waste_file_size: 200MB` to `C:\filescan\config.yml`.
 
 ---
 
+### 10. README.md
+
+Write a top-level `README.md` covering:
+
+**System overview:** `filescan` is a Windows file organisation tool built around
+a review-first workflow — nothing is moved or deleted without explicit user
+approval. The pipeline is:
+```
+scan → duplicates → similarity → plan → report → execute (explicit only)
+```
+
+**Key concepts to explain:**
+
+- *Exact duplicates vs similar folders* — `duplicates` finds byte-for-byte
+  identical files by hash; `similarity` finds folders that largely share those
+  duplicates; `clusters` groups similar folders for merge review. These are
+  separate pipeline stages because clusters depend on duplicates having run first.
+  The user-facing entry point for reviewing and acting on folder redundancy is
+  `filescan merge-review`, not the individual stage commands.
+
+- *Review-first* — `execute` only acts on proposals that have been explicitly
+  approved in the plan artifact. No auto-delete anywhere in the normal pipeline.
+
+- *Restartability* — pipeline progress is stored in SQLite; a crash or
+  interruption loses only the current batch. Re-running a stage picks up where
+  it left off unless `--rescan` is given.
+
+**Sections:**
+1. What it does (2–3 sentences)
+2. Pipeline diagram / stage table (matches CLAUDE.md architecture table)
+3. Quick start (`poetry install`, `filescan run`, `filescan largest`,
+   `filescan waste`, `filescan merge-review`)
+4. Config file reference (key fields with examples)
+5. Design principles (review-first, no auto-delete, restartable, Windows-only)
+6. Commands reference (one line per subcommand)
+
+Keep it concise — target audience is the developer returning after a break, not
+end users. Cross-reference CLAUDE.md for deeper architecture notes.
+
+---
+
 ## Completed
 
 1. `large_file_size` config parameter — `_parse_size()` helper, roots now object format in config.yml, `large_file_size` / `large_file_thresholds` / `large_file_size_for()` added to `ScanConfig`
@@ -326,3 +368,6 @@ The user has added `waste_file_size: 200MB` to `C:\filescan\config.yml`.
 3. AGENTS.md compliance audit — fixed: `os.scandir` → `Path.iterdir()` in scanner.py; tqdm added to `find_waste_candidates`; exception logging added in `largest_files.py`
 4. TypeError fix — removed `leave=False` from `track()` call in `refresh.py` (unsupported kwarg)
 5. Duplicate folder merge — backend clustering: `src/filescan/similarity/clusters.py` (new). Union-find groups similarity pairs above `similarity_cluster_threshold` (default 0.70) into `FolderCluster` objects. Three-track dispatch: mark_backup pairs excluded, remaining pairs above threshold → clusters, pairs below threshold remain as needs_review. Hierarchy suppression: child cluster suppressed only when every member has an ancestor in one single parent cluster. Master selected by preferred root → highest file count → shallowest depth → newest mtime. Unique files identified by full_hash comparison against master; unhashed files treated conservatively as unique. `recompute_unique_files()` helper for TUI master-cycling. `filescan clusters [--show-suppressed]` debug command dumps clusters as JSON. `ClusterMember` and `FolderCluster` dataclasses added to `models.py`; `similarity_cluster_threshold` added to `ScanConfig` and `config.py`.
+6. Duplicate folder merge — plan artifact extension: `build_plan_artifact` now uses three-track dispatch (`_build_non_cluster_proposals` for mark_backup/needs_review + `build_clusters` for merge_cluster). Plan JSON gains a `"clusters"` array alongside `"proposals"`. Each cluster entry serialises path, is_master, file_count, total_bytes, unique_file_count, unique_files, status (pending/approved/rejected/skipped). `ProposalBuilder.build()` is unchanged (existing test still passes). CLI run summary now reports cluster count. `tests/unit/test_plan_artifact_extension.py` added (4 tests).
+8. Duplicate folder merge — execute pipeline: `ExecutionRunner.run()` now processes `plan["clusters"]` after `plan["proposals"]`. For each approved cluster: copies unique files from each copy folder to master (preserving relative subdirectory structure), verifies each copy with `files_match()`, writes `.filescan-merged` marker file in each copy folder on success, prints "safe to delete" message. Conflict detection (destination exists with different content) and per-file OSError handling. Results recorded in execution artifact using `cluster_id` as `proposal_id`. Source never deleted automatically. `tests/unit/test_cluster_execution.py` (6 tests).
+7. Duplicate folder merge — Textual TUI (`filescan merge-review [--plan path]`): `src/filescan/similarity/merge_review.py`. Two-panel layout: left `ListView` (score, master folder name, total size, status icon), right `Static` (master/copy details, unique file list). Bindings: a/r/s → approve/reject/skip, m → cycle master (calls `_cycle_master_in_dict`, DB held open, unique files recomputed live), o → open master in Explorer, h → toggle suppressed clusters, q/Escape → save plan JSON and exit. Plan artifact updated in-place on quit. `_cycle_master_in_dict` added to `clusters.py`. `tests/unit/test_merge_review.py` (9 tests: label/detail formatting + master cycling with unique-file recomputation).

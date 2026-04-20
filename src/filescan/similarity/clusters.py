@@ -237,6 +237,47 @@ def build_clusters(config: ScanConfig, db: SQLiteDB) -> list[FolderCluster]:
     return clusters
 
 
+def _cycle_master_in_dict(cluster_dict: dict, db: SQLiteDB) -> dict:
+    """Cycle the master to the next member in-place and recompute unique files.
+
+    Mutates and returns cluster_dict so callers can chain or ignore the return value.
+    """
+    members = cluster_dict["members"]
+    current_idx = next((i for i, m in enumerate(members) if m["is_master"]), 0)
+    next_idx = (current_idx + 1) % len(members)
+    new_master_path = Path(members[next_idx]["path"])
+
+    fc = FolderCluster(
+        cluster_id=cluster_dict["cluster_id"],
+        members=tuple(
+            ClusterMember(
+                path=Path(m["path"]),
+                is_master=m["is_master"],
+                file_count=m["file_count"],
+                total_bytes=m["total_bytes"],
+                unique_file_paths=tuple(Path(p) for p in m["unique_files"]),
+            )
+            for m in members
+        ),
+        min_score=cluster_dict["min_score"],
+        is_suppressed=cluster_dict["is_suppressed"],
+    )
+
+    updated = recompute_unique_files(fc, new_master_path, db)
+    cluster_dict["members"] = [
+        {
+            "path": str(m.path),
+            "is_master": m.is_master,
+            "file_count": m.file_count,
+            "total_bytes": m.total_bytes,
+            "unique_file_count": len(m.unique_file_paths),
+            "unique_files": [str(p) for p in m.unique_file_paths],
+        }
+        for m in updated.members
+    ]
+    return cluster_dict
+
+
 def find_clusters(config_path: Path) -> list[FolderCluster]:
     from filescan.config import load_config
     config = load_config(config_path)
