@@ -8,8 +8,8 @@
 - [x] 6. Duplicate folder merge — plan artifact extension (cluster-aware merge proposals in existing JSON schema)
 - [x] 7. Duplicate folder merge — Textual TUI review (`filescan merge-review` command)
 - [x] 8. Duplicate folder merge — execute pipeline update (cluster merges via existing ExecutionRunner)
-- [ ] 9. Implement a waste_file_size threshold so that small files are not reported.
-- [ ] 10. Write README.md for the repository
+- [x] 9. Implement a waste_file_size threshold so that small files are not reported.
+- [x] 10. Write README.md for the repository
 
 ---
 
