@@ -3,15 +3,18 @@ name = "filescan"
 version = "0.1.0"
 description = ""
 authors = ["David Baines <davidcbaines@gmail.com>"]
+packages = [{ include = "filescan", from = "src" }]
 
 [tool.poetry.dependencies]
-python = ">=3.8"
+python = ">=3.12,<4.0"
 pyyaml = ">=6.0.3,<7.0.0"
 xxhash = [
-    {version = ">=3.6.0,<4.0.0", python = ">=3.12"},
-    {version = ">=3.4.0,<3.5.0", python = ">=3.8,<3.12"}
+    {version = ">=3.6.0,<4.0.0", python = ">=3.12"}
 ]
 tqdm = "^4.67.3"
+pytest = "^9.0.2"
+textual = "^8.2.4"
+send2trash = "^2.1.0"
 
 [tool.poetry.dev-dependencies]
 flake8 = {version = ">=7.3.0,<8.0.0", python = ">=3.12"}
@@ -21,3 +24,10 @@ black = {version = ">=26.3.1,<27.0.0", python = ">=3.12"}
 [build-system]
 requires = ["poetry-core>=1.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+filescan = "filescan.cli:main"
+
+[tool.pytest.ini_options]
+addopts = "-p no:cacheprovider"
+norecursedirs = ["pytest-cache-files-*", ".pytest_cache", "__pycache__", ".pytest_tmp", "test-temp"]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -23,6 +24,15 @@ class ScanConfig:
     merge_threshold: float = 0.93
     worker_count: int = 4
     backup_name_tokens: tuple[str, ...] = ("backup", "copy", "old", "temp", "temporary")
+    large_file_size: int = 500_000_000
+    large_file_thresholds: dict[Path, int] = field(default_factory=dict)
+    scan_max_age: timedelta = timedelta(days=30)
+    waste_file_size: int = 0
+
+    similarity_cluster_threshold: float = 0.70
+
+    def large_file_size_for(self, root: Path) -> int:
+        return self.large_file_thresholds.get(root, self.large_file_size)
 
     @property
     def artifact_dir(self) -> Path:
@@ -90,6 +100,35 @@ class FolderSimilarityCandidate:
     id: int | None = None
     folder_a_id: int | None = None
     folder_b_id: int | None = None
+
+
+@dataclass(slots=True)
+class ClusterMember:
+    path: Path
+    is_master: bool
+    file_count: int
+    total_bytes: int
+    unique_file_paths: tuple[Path, ...]
+
+
+@dataclass(slots=True)
+class FolderCluster:
+    cluster_id: str
+    members: tuple[ClusterMember, ...]
+    min_score: float
+    is_suppressed: bool = False
+
+    @property
+    def master(self) -> ClusterMember:
+        return next(m for m in self.members if m.is_master)
+
+    @property
+    def copies(self) -> tuple[ClusterMember, ...]:
+        return tuple(m for m in self.members if not m.is_master)
+
+    @property
+    def total_bytes(self) -> int:
+        return sum(m.total_bytes for m in self.members)
 
 
 @dataclass(slots=True)

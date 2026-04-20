@@ -1,0 +1,10 @@
+database_filename: file_index.db
+database_folder: F:\GitHub\filescan\tests\manual\report_fixture\output
+duplicate_size_threshold: 1
+filescan_folder: F:\GitHub\filescan\tests\manual\report_fixture\output
+merge_threshold: 0.9
+report_filename: filescan_report.xlsx
+roots:
+- F:\GitHub\filescan\tests\manual\report_fixture\input\root
+similarity_threshold: 0.2
+worker_count: 2

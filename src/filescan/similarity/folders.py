@@ -23,18 +23,21 @@ class FolderSimilarityAnalyser:
     def _ancestor_map(self, folders: list[FolderRecord]) -> dict[int, set[int]]:
         folder_by_id = {folder.id: folder for folder in folders if folder.id is not None}
         ancestors: dict[int, set[int]] = {}
-        for folder in folders:
-            if folder.id is None:
-                continue
-            parent_id = folder.parent_id
-            lineage: set[int] = set()
-            while parent_id is not None:
-                lineage.add(parent_id)
-                parent_folder = folder_by_id.get(parent_id)
-                if parent_folder is None:
-                    break
-                parent_id = parent_folder.parent_id
-            ancestors[folder.id] = lineage
+        with progress_bar(desc="similarity ancestors", total=len(folders), unit="folder") as bar:
+            for folder in folders:
+                if folder.id is None:
+                    bar.update(1)
+                    continue
+                parent_id = folder.parent_id
+                lineage: set[int] = set()
+                while parent_id is not None:
+                    lineage.add(parent_id)
+                    parent_folder = folder_by_id.get(parent_id)
+                    if parent_folder is None:
+                        break
+                    parent_id = parent_folder.parent_id
+                ancestors[folder.id] = lineage
+                bar.update(1)
         return ancestors
 
     def _aggregate_folder_data(
@@ -46,14 +49,18 @@ class FolderSimilarityAnalyser:
         children = self._children_by_parent(folders)
         folder_count = sum(1 for folder in folders if folder.id is not None)
         files_by_folder: dict[int, list[FileRecord]] = defaultdict(list)
-        for file_record in files:
-            if file_record.folder_id is not None:
-                files_by_folder[file_record.folder_id].append(file_record)
-        duplicate_hashes_by_folder: dict[int, set[str]] = defaultdict(set)
-        for group in duplicate_groups:
-            for file_record in group.files:
+        with progress_bar(desc="similarity files", total=len(files), unit="file") as bar:
+            for file_record in files:
                 if file_record.folder_id is not None:
-                    duplicate_hashes_by_folder[file_record.folder_id].add(group.full_hash)
+                    files_by_folder[file_record.folder_id].append(file_record)
+                bar.update(1)
+        duplicate_hashes_by_folder: dict[int, set[str]] = defaultdict(set)
+        with progress_bar(desc="similarity duplicates", total=len(duplicate_groups), unit="group") as bar:
+            for group in duplicate_groups:
+                for file_record in group.files:
+                    if file_record.folder_id is not None:
+                        duplicate_hashes_by_folder[file_record.folder_id].add(group.full_hash)
+                bar.update(1)
 
         aggregates: dict[int, dict[str, object]] = {}
 
@@ -122,9 +129,26 @@ class FolderSimilarityAnalyser:
             candidates = repo.list_similarity_candidates()
             db.close()
             return candidates
-        folders = repo.list_active_folders()
-        files = repo.list_active_files()
-        duplicate_groups = repo.list_duplicate_groups()
+        total_folders = repo.count_active_folders()
+        folders: list[FolderRecord] = []
+        with progress_bar(desc="similarity load folders", total=total_folders, unit="folder") as bar:
+            for folder in repo.iter_active_folders():
+                folders.append(folder)
+                bar.update(1)
+
+        total_files = repo.count_active_files()
+        files: list[FileRecord] = []
+        with progress_bar(desc="similarity load files", total=total_files, unit="file") as bar:
+            for file_record in repo.iter_active_files():
+                files.append(file_record)
+                bar.update(1)
+
+        total_duplicate_groups = repo.count_duplicate_groups()
+        duplicate_groups: list[DuplicateGroup] = []
+        with progress_bar(desc="similarity load duplicates", total=total_duplicate_groups, unit="group") as bar:
+            for group in repo.iter_duplicate_groups():
+                duplicate_groups.append(group)
+                bar.update(1)
         aggregates = self._aggregate_folder_data(folders, files, duplicate_groups)
         ancestors = self._ancestor_map(folders)
         folder_by_id = {folder.id: folder for folder in folders if folder.id is not None}

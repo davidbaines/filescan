@@ -3,13 +3,17 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from filescan.cleanup.waste_detector import find_waste_candidates, print_waste_report, write_waste_shortcuts
 from filescan.config import load_config
 from filescan.dedupe.duplicates import run_duplicates
 from filescan.execution.mover import run_execution
+from filescan.inventory.preflight import check_db_space, check_stale_roots
 from filescan.inventory.scanner import run_scan
 from filescan.planning.artifacts import load_plan_artifact
 from filescan.planning.proposals import build_plan_artifact
+from filescan.reporting.largest_files import _fmt_size, find_large_files, run_largest
 from filescan.reporting.xlsx import write_report
+from filescan.similarity.clusters import dump_clusters_json, find_clusters
 from filescan.similarity.folders import run_similarity
 from filescan.storage.db import validate_database_ready
 
@@ -30,6 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     scan_parser = subparsers.add_parser("scan")
     scan_parser.add_argument("--rescan", action="store_true", help="Re-scan roots even if they were already scanned.")
+    scan_parser.add_argument("--delta", action="store_true", help="Fast update: skip folders whose mtime is unchanged since last scan.")
 
     duplicates_parser = subparsers.add_parser("duplicates")
     duplicates_parser.add_argument("--rescan", action="store_true", help="Rebuild duplicate analysis even if cached results exist.")
@@ -44,6 +49,10 @@ def build_parser() -> argparse.ArgumentParser:
     execute_parser.add_argument("--plan", type=Path, required=True)
 
     subparsers.add_parser("report")
+    subparsers.add_parser("waste")
+    subparsers.add_parser("largest")
+    clusters_parser = subparsers.add_parser("clusters", help="Debug: dump folder clusters as JSON.")
+    clusters_parser.add_argument("--show-suppressed", action="store_true", help="Include hierarchy-suppressed clusters.")
     return parser
 
 
@@ -63,7 +72,12 @@ def _validate_database(config_path: Path) -> None:
             raise SystemExit(f"Output preflight failed: {exc} ({output_dir})") from exc
 
 
+def _check_scan_space(config_path: Path) -> None:
+    check_db_space(load_config(config_path))
+
+
 def _run_pipeline(config_path: Path, *, rescan: bool = False, replan: bool = False) -> dict[str, object]:
+    _check_scan_space(config_path)
     _stage_start("scan")
     scan_run_id = run_scan(config_path, rescan=rescan)
     _stage_start("duplicates")
@@ -76,6 +90,20 @@ def _run_pipeline(config_path: Path, *, rescan: bool = False, replan: bool = Fal
     proposal_count = len(load_plan_artifact(artifact_path).get("proposals", []))
     _stage_start("report")
     report_path = write_report(config_path)
+    _stage_start("waste")
+    waste_candidates = find_waste_candidates(config_path)
+    print_waste_report(waste_candidates)
+    waste_shortcut_dir = None
+    if waste_candidates:
+        waste_shortcut_dir = write_waste_shortcuts(waste_candidates, config.filescan_folder / "waste_review")
+    _stage_start("largest")
+    large_files = find_large_files(config)
+    if large_files:
+        total_bytes = sum(size for _, size in large_files)
+        print(f"  {len(large_files)} files found ({_fmt_size(total_bytes)} total).")
+        print("  Run 'filescan largest' to review interactively.")
+    else:
+        print(f"  No files found above the threshold ({_fmt_size(config.large_file_size)}).")
     return {
         "scan_run_id": scan_run_id,
         "duplicate_group_count": len(duplicate_groups),
@@ -83,6 +111,9 @@ def _run_pipeline(config_path: Path, *, rescan: bool = False, replan: bool = Fal
         "proposal_count": proposal_count,
         "plan_artifact": artifact_path,
         "report_path": report_path,
+        "waste_candidate_count": len(waste_candidates),
+        "waste_shortcut_dir": waste_shortcut_dir,
+        "large_file_count": len(large_files),
     }
 
 
@@ -94,26 +125,35 @@ def _print_run_summary(*, config: Path, resolved_config, results: dict[str, obje
     print(f"  similarity: completed ({results['similarity_candidate_count']} candidates)")
     print(f"  plan: completed ({results['proposal_count']} proposals)")
     print("  report: completed")
+    print(f"  waste: {results['waste_candidate_count']} candidates found")
+    print(f"  largest: {results['large_file_count']} large files found")
     print(f"  filescan folder: {resolved_config.filescan_folder}")
     print(f"  database: {resolved_config.database_path}")
     print(f"  plan artifact: {results['plan_artifact']}")
     print(f"  report: {results['report_path']}")
+    if results["waste_shortcut_dir"]:
+        print(f"  waste shortcuts: {results['waste_shortcut_dir']}")
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
     if args.command is None:
         args.command = "run"
     _validate_database(args.config)
     config = load_config(args.config)
 
+    if args.command != "scan":
+        check_stale_roots(config)
+
     if args.command == "run":
         results = _run_pipeline(args.config, rescan=args.rescan, replan=getattr(args, "replan", False))
         _print_run_summary(config=args.config, resolved_config=config, results=results)
     elif args.command == "scan":
+        _check_scan_space(args.config)
         _stage_start("scan")
-        run_scan(args.config, rescan=args.rescan)
+        run_scan(args.config, rescan=args.rescan, delta=getattr(args, "delta", False))
     elif args.command == "duplicates":
         _stage_start("duplicates")
         run_duplicates(args.config, rescan=args.rescan)
@@ -132,6 +172,22 @@ def main(argv: list[str] | None = None) -> int:
         _stage_start("report")
         report_path = write_report(args.config)
         print(report_path)
+    elif args.command == "waste":
+        _stage_start("waste")
+        candidates = find_waste_candidates(args.config)
+        print_waste_report(candidates)
+        if candidates:
+            shortcut_dir = write_waste_shortcuts(candidates, config.filescan_folder / "waste_review")
+            print(f"\nShortcut folder: {shortcut_dir}")
+            print("Open that folder in Explorer — double-click any shortcut to browse the candidate.")
+    elif args.command == "largest":
+        _stage_start("largest")
+        run_largest(args.config)
+    elif args.command == "clusters":
+        clusters = find_clusters(args.config)
+        if not getattr(args, "show_suppressed", False):
+            clusters = [c for c in clusters if not c.is_suppressed]
+        print(dump_clusters_json(clusters))
     return 0
 
 

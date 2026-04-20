@@ -200,6 +200,38 @@ class SQLiteDB:
             """
         )
 
+        self._ensure_column("file_hashes", "updated_at", "TEXT")
+        self.conn.execute(
+            """
+            UPDATE file_hashes
+            SET updated_at = COALESCE(updated_at, CURRENT_TIMESTAMP)
+            """
+        )
+
+        self._ensure_column("duplicate_groups", "created_at", "TEXT")
+        self.conn.execute(
+            """
+            UPDATE duplicate_groups
+            SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP)
+            """
+        )
+
+        self._ensure_column("folder_similarity_candidates", "created_at", "TEXT")
+        self.conn.execute(
+            """
+            UPDATE folder_similarity_candidates
+            SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP)
+            """
+        )
+
+        self._ensure_column("analysis_state", "updated_at", "TEXT")
+        self.conn.execute(
+            """
+            UPDATE analysis_state
+            SET updated_at = COALESCE(updated_at, CURRENT_TIMESTAMP)
+            """
+        )
+
         self._migrate_scan_stats_table()
         self.conn.commit()
 
