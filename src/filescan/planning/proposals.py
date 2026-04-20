@@ -5,6 +5,7 @@ from pathlib import Path
 from filescan.config import load_config
 from filescan.models import PlanProposal, ScanConfig
 from filescan.planning.artifacts import latest_plan_artifact, load_plan_artifact, write_plan_artifact
+from filescan.similarity.clusters import build_clusters
 from filescan.storage import FileRepository, SQLiteDB
 
 
@@ -67,6 +68,53 @@ def build_proposals(config_path: str | Path) -> list[PlanProposal]:
     return ProposalBuilder(load_config(config_path)).build()
 
 
+def _build_non_cluster_proposals(
+    config: ScanConfig, repo: FileRepository
+) -> list[PlanProposal]:
+    """Generate mark_backup and needs_review proposals (three-track dispatch, tracks 1 and 3).
+
+    Track 2 (merge_cluster) is handled separately by build_clusters().
+    """
+    builder = ProposalBuilder(config)
+    candidates = repo.list_similarity_candidates()
+    proposals: list[PlanProposal] = []
+    proposal_index = 0
+
+    for candidate in candidates:
+        is_backup = candidate.score >= config.merge_threshold and candidate.name_bonus > 0
+        is_cluster_eligible = candidate.score >= config.similarity_cluster_threshold and not is_backup
+
+        if is_cluster_eligible:
+            continue  # handled by build_clusters
+
+        proposal_index += 1
+        pid = f"proposal-{proposal_index:04d}"
+        evidence = (f"similarity:{candidate.id or proposal_index}", candidate.reason)
+
+        if is_backup:
+            canonical, other = builder._canonical_pair(candidate.folder_a, candidate.folder_b)
+            proposals.append(PlanProposal(
+                proposal_id=pid,
+                action="mark_backup",
+                source_paths=(other,),
+                target_path=canonical,
+                evidence=evidence,
+                reason=f"Folder looks like a backup copy of {canonical} based on {candidate.reason}.",
+            ))
+        else:
+            sources = tuple(sorted((candidate.folder_a, candidate.folder_b), key=str))
+            proposals.append(PlanProposal(
+                proposal_id=pid,
+                action="needs_review",
+                source_paths=sources,
+                target_path=None,
+                evidence=evidence,
+                reason=f"Folder pair needs review before any move because evidence is mixed: {candidate.reason}.",
+            ))
+
+    return proposals
+
+
 def build_plan_artifact(config_path: str | Path, *, replan: bool = False) -> Path:
     config = load_config(config_path)
     db = SQLiteDB(config.database_path)
@@ -83,10 +131,13 @@ def build_plan_artifact(config_path: str | Path, *, replan: bool = False) -> Pat
             db.close()
             return latest_artifact_path
 
-    proposals = ProposalBuilder(config).build()
+    proposals = _build_non_cluster_proposals(config, repo)
+    clusters = build_clusters(config, db)
+
     artifact_path = write_plan_artifact(
         config.artifact_dir,
         proposals,
+        clusters=clusters,
         scan_run_id=latest_scan_run_id,
         similarity_scan_run_id=similarity_scan_run_id,
     )

@@ -87,7 +87,9 @@ def _run_pipeline(config_path: Path, *, rescan: bool = False, replan: bool = Fal
     _stage_start("plan")
     artifact_path = build_plan_artifact(config_path, replan=replan)
     config = load_config(config_path)
-    proposal_count = len(load_plan_artifact(artifact_path).get("proposals", []))
+    _plan = load_plan_artifact(artifact_path)
+    proposal_count = len(_plan.get("proposals", []))
+    cluster_count = len(_plan.get("clusters", []))
     _stage_start("report")
     report_path = write_report(config_path)
     _stage_start("waste")
@@ -109,6 +111,7 @@ def _run_pipeline(config_path: Path, *, rescan: bool = False, replan: bool = Fal
         "duplicate_group_count": len(duplicate_groups),
         "similarity_candidate_count": len(similarity_candidates),
         "proposal_count": proposal_count,
+        "cluster_count": cluster_count,
         "plan_artifact": artifact_path,
         "report_path": report_path,
         "waste_candidate_count": len(waste_candidates),
@@ -123,7 +126,7 @@ def _print_run_summary(*, config: Path, resolved_config, results: dict[str, obje
     print(f"  scan: completed (scan_run_id={results['scan_run_id']})")
     print(f"  duplicates: completed ({results['duplicate_group_count']} duplicate groups)")
     print(f"  similarity: completed ({results['similarity_candidate_count']} candidates)")
-    print(f"  plan: completed ({results['proposal_count']} proposals)")
+    print(f"  plan: completed ({results['proposal_count']} proposals, {results['cluster_count']} clusters)")
     print("  report: completed")
     print(f"  waste: {results['waste_candidate_count']} candidates found")
     print(f"  largest: {results['large_file_count']} large files found")
