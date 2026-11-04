@@ -165,3 +165,23 @@ def test_records_read_from_database_do_not_touch_filesystem(tmp_path: Path, writ
     assert [f.path.name for f in repo.list_active_files()] == ["b.txt"]
     assert len(repo.list_active_folders()) == 2
     db.close()
+
+
+def test_scan_stores_windows_file_attributes(tmp_path: Path, write_config) -> None:
+    import subprocess
+
+    from filescan.storage import FileRepository, SQLiteDB
+    from tests.helpers.tree_builder import build_tree
+
+    root = tmp_path / "root"
+    build_tree(root, {"plain.txt": b"plain", "hidden.txt": b"hidden"})
+    subprocess.run(["attrib", "+h", str(root / "hidden.txt")], check=True, capture_output=True)
+    config = load_config(write_config([root]))
+
+    InventoryScanner(config, rescan=True).scan()
+
+    db = SQLiteDB(config.database_path)
+    attrs = {f.filename: f.attributes for f in FileRepository(db).list_active_files()}
+    db.close()
+    assert attrs["hidden.txt"] & 0x2  # FILE_ATTRIBUTE_HIDDEN
+    assert not attrs["plain.txt"] & 0x2

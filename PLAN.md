@@ -119,7 +119,7 @@ Files are scattered across the PC (C: user folders, D:, E:, F:), the LaCie J: an
     - The scanner never walks `location: server` roots; `import-server` lists them instead.
     - The duplicate detector never hashes server files; `fsagent hash` does.
     - Marking missing files for server roots happens during the import.
-- [ ] **Cloud placeholders.**
+- [x] **Cloud placeholders.** The scanner stores `attributes`, and the duplicate detector skips placeholders. Listing them in the Phase 3 and exclusion reports is still to do.
   - iCloudDrive has 23 placeholder files and OneDrive 16 (`RECALL_ON_DATA_ACCESS`), and reading one downloads it.
   - Store `st_file_attributes` in the scanner, which costs nothing on Windows, and never hash files flagged `RECALL_ON_DATA_ACCESS` (0x400000), `RECALL_ON_OPEN` (0x40000) or `OFFLINE` (0x1000).
   - Report them separately. Don't skip every reparse point, because files OneDrive keeps on the device are reparse points too.

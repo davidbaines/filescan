@@ -191,3 +191,38 @@ def test_duplicate_detector_batches_hash_commits(tmp_path: Path, make_repo, monk
 
     assert len(groups) == 40
     assert commits["count"] < 20  # 160 hashes written; one commit each would be 160+
+
+
+def test_duplicate_detector_never_hashes_cloud_placeholders(tmp_path: Path, make_repo) -> None:
+    root = tmp_path / "root"
+    created = build_tree(
+        root,
+        {
+            "local/a.bin": b"same content",
+            "local/b.bin": b"same content",
+            "cloud/c.bin": b"same content",
+        },
+    )
+    db, repo = make_repo(tmp_path / "duplicates.db")
+    index_paths(repo, root, created)
+    # Simulate an iCloud/OneDrive placeholder: reading it would download it.
+    db.conn.execute("UPDATE files SET attributes = 0x400000 WHERE filename = 'c.bin'")
+    db.conn.commit()
+    detector = DuplicateDetector(
+        ScanConfig(
+            roots=[root],
+            filescan_folder=tmp_path / "filescan",
+            database_path=tmp_path / "duplicates.db",
+            report_path=tmp_path / "report.xlsx",
+            duplicate_size_threshold=1,
+        )
+    )
+
+    groups = detector.run()
+
+    assert [sorted(f.filename for f in g.files) for g in groups] == [["a.bin", "b.bin"]]
+    hashed = {row[0] for row in db.conn.execute(
+        "SELECT f.filename FROM file_hashes h JOIN files f ON f.id = h.file_id"
+    )}
+    assert "c.bin" not in hashed
+    db.close()

@@ -4,6 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+# Windows attributes of cloud placeholders (iCloud, OneDrive Files On-Demand).
+# Reading such a file downloads it, so they are never hashed.
+FILE_ATTRIBUTE_OFFLINE = 0x1000
+FILE_ATTRIBUTE_RECALL_ON_OPEN = 0x40000
+FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS = 0x400000
+CLOUD_PLACEHOLDER_MASK = FILE_ATTRIBUTE_OFFLINE | FILE_ATTRIBUTE_RECALL_ON_OPEN | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
+
 # Escape character for LIKE patterns. Windows forbids "|" in file names, so it
 # never needs escaping in practice, but it is escaped anyway for safety.
 LIKE_ESCAPE = "|"

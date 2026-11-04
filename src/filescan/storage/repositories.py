@@ -5,7 +5,7 @@ from pathlib import Path
 
 from filescan.models import DuplicateGroup, FileRecord, FolderRecord, FolderSimilarityCandidate
 from filescan.storage.db import SQLiteDB
-from filescan.storage.sql import path_prefix
+from filescan.storage.sql import CLOUD_PLACEHOLDER_MASK, path_prefix
 
 
 class FileRepository:
@@ -88,8 +88,10 @@ class FileRepository:
             )
             self.db.conn.execute(
                 """
-                INSERT INTO files (folder_id, filename, path, size, mtime, ctime, scan_run_id, is_missing, last_scanned_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP)
+                INSERT INTO files (
+                    folder_id, filename, path, size, mtime, ctime, scan_run_id, is_missing, last_scanned_at, attributes
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP, ?)
                 ON CONFLICT(path) DO UPDATE SET
                     folder_id = excluded.folder_id,
                     filename = excluded.filename,
@@ -98,7 +100,8 @@ class FileRepository:
                     ctime = excluded.ctime,
                     scan_run_id = excluded.scan_run_id,
                     is_missing = 0,
-                    last_scanned_at = CURRENT_TIMESTAMP
+                    last_scanned_at = CURRENT_TIMESTAMP,
+                    attributes = excluded.attributes
                 """,
                 (
                     folder_id,
@@ -108,6 +111,7 @@ class FileRepository:
                     file_record.mtime,
                     file_record.ctime,
                     scan_run_id,
+                    file_record.attributes,
                 ),
             )
         self.db.conn.commit()
@@ -251,11 +255,12 @@ class FileRepository:
             WHERE files.is_missing = 0
               AND folders.is_missing = 0
               AND files.size >= ?
+              AND (files.attributes & ?) = 0
             GROUP BY files.size
             HAVING COUNT(*) > 1
             ORDER BY files.size
             """,
-            (min_size,),
+            (min_size, CLOUD_PLACEHOLDER_MASK),
         )
         return [(int(row["size"]), int(row["file_count"])) for row in rows]
 
@@ -263,7 +268,7 @@ class FileRepository:
         rows = self.db.conn.execute(
             """
             SELECT files.id, files.folder_id, folders.path AS folder_path, files.filename, files.path, files.size,
-                   files.mtime, files.ctime, files.scan_run_id, files.is_missing,
+                   files.mtime, files.ctime, files.scan_run_id, files.is_missing, files.attributes,
                    file_hashes.quick_hash, file_hashes.full_hash
             FROM files
             JOIN folders ON folders.id = files.folder_id
@@ -271,9 +276,10 @@ class FileRepository:
             WHERE files.size = ?
               AND files.is_missing = 0
               AND folders.is_missing = 0
+              AND (files.attributes & ?) = 0
             ORDER BY files.path
             """,
-            (size,),
+            (size, CLOUD_PLACEHOLDER_MASK),
         )
         return [self._file_from_row(row) for row in rows]
 
@@ -308,13 +314,14 @@ class FileRepository:
             is_missing=bool(row["is_missing"]),
             quick_hash=row["quick_hash"],
             full_hash=row["full_hash"],
+            attributes=int(row["attributes"]) if "attributes" in row.keys() else 0,
         )
 
     def iter_active_files(self, *, min_size: int = 0):
         rows = self.db.conn.execute(
             """
             SELECT files.id, files.folder_id, folders.path AS folder_path, files.filename, files.path, files.size,
-                   files.mtime, files.ctime, files.scan_run_id, files.is_missing,
+                   files.mtime, files.ctime, files.scan_run_id, files.is_missing, files.attributes,
                    file_hashes.quick_hash, file_hashes.full_hash
             FROM files
             JOIN folders ON folders.id = files.folder_id

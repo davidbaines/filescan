@@ -55,7 +55,8 @@ class SQLiteDB:
                 ctime REAL NOT NULL,
                 scan_run_id INTEGER NOT NULL,
                 is_missing INTEGER NOT NULL DEFAULT 0,
-                last_scanned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                last_scanned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                attributes INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS file_hashes (
@@ -186,17 +187,20 @@ class SQLiteDB:
         self.conn.execute(
             """
             UPDATE folders
-            SET last_scanned_at = COALESCE(last_scanned_at, CURRENT_TIMESTAMP)
+            SET last_scanned_at = CURRENT_TIMESTAMP
+            WHERE last_scanned_at IS NULL
             """
         )
 
         self._ensure_column("files", "scan_run_id", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("files", "is_missing", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("files", "last_scanned_at", "TEXT")
+        self._ensure_column("files", "attributes", "INTEGER NOT NULL DEFAULT 0")
         self.conn.execute(
             """
             UPDATE files
-            SET last_scanned_at = COALESCE(last_scanned_at, CURRENT_TIMESTAMP)
+            SET last_scanned_at = CURRENT_TIMESTAMP
+            WHERE last_scanned_at IS NULL
             """
         )
 
@@ -204,7 +208,8 @@ class SQLiteDB:
         self.conn.execute(
             """
             UPDATE file_hashes
-            SET updated_at = COALESCE(updated_at, CURRENT_TIMESTAMP)
+            SET updated_at = CURRENT_TIMESTAMP
+            WHERE updated_at IS NULL
             """
         )
 
@@ -212,7 +217,8 @@ class SQLiteDB:
         self.conn.execute(
             """
             UPDATE duplicate_groups
-            SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP)
+            SET created_at = CURRENT_TIMESTAMP
+            WHERE created_at IS NULL
             """
         )
 
@@ -220,7 +226,8 @@ class SQLiteDB:
         self.conn.execute(
             """
             UPDATE folder_similarity_candidates
-            SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP)
+            SET created_at = CURRENT_TIMESTAMP
+            WHERE created_at IS NULL
             """
         )
 
@@ -228,7 +235,8 @@ class SQLiteDB:
         self.conn.execute(
             """
             UPDATE analysis_state
-            SET updated_at = COALESCE(updated_at, CURRENT_TIMESTAMP)
+            SET updated_at = CURRENT_TIMESTAMP
+            WHERE updated_at IS NULL
             """
         )
 

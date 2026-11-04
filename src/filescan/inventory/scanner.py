@@ -142,6 +142,7 @@ class InventoryScanner:
                     size=stat.st_size,
                     mtime=stat.st_mtime,
                     ctime=stat.st_ctime,
+                    attributes=getattr(stat, "st_file_attributes", 0),
                 )
             )
         folder_stat = self._safe_stat(folder, kind="folder")

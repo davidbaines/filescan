@@ -68,6 +68,7 @@ class FileRecord:
     is_missing: bool = False
     quick_hash: str | None = None
     full_hash: str | None = None
+    attributes: int = 0  # Windows st_file_attributes
 
 
 @dataclass(slots=True)
