@@ -26,6 +26,8 @@ class RootConfig:
     location: RootLocation = "pc"
     role: RootRole = "source"
     skip: tuple[Path, ...] = ()
+    server_path: str | None = None  # POSIX mount point of a server root
+    exclude_dirs: tuple[str, ...] = ()  # folder names fsagent leaves out, e.g. lost+found
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +71,8 @@ class ScanConfig:
     root_configs: list[RootConfig] = field(default_factory=list)
     exclusions: tuple[ExclusionRule, ...] = ()
     pinned: tuple[Path, ...] = ()
+    server_ssh: str = ""  # e.g. david@192.168.1.133
+    server_python: str = "python3"
 
     def large_file_size_for(self, root: Path) -> int:
         return self.large_file_thresholds.get(root, self.large_file_size)

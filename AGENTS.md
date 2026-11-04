@@ -29,6 +29,8 @@ filescan --config config.yml execute --plan /path/to/plan.json
 filescan --config config.yml waste
 filescan --config config.yml largest
 filescan --config config.yml merge-review
+filescan --config config.yml import-server       # list server roots with fsagent over SSH
+filescan --config config.yml exclusions-report   # CSV of what each exclusion rule leaves out
 
 poetry run pytest tests                          # run all tests
 poetry run pytest tests/unit/test_config.py      # one file
@@ -62,7 +64,7 @@ The live configuration and database are in `C:\filescan` (`config.yml`, `file_in
 
 **Hashing:** `dedupe/hashing.py`. The quick hash reads a 4 KB head, a 4 KB tail and the size. The full hash streams the whole file in 1 MB chunks with xxhash128.
 
-**Server helper (planned):** `server/fsagent.py` runs on the Debian server. It lists, hashes and copies files locally, and filescan drives it over SSH.
+**Server helper:** `server/fsagent.py` runs on the Debian server. It lists, hashes and copies files locally, and filescan drives it over SSH. `inventory/server_import.py` streams it to the server's `python3` on stdin, runs `list`, and stores the results under UNC paths. Server roots in `config.yml` need `location: server` and `server_path` (the POSIX mount point); the top-level `server: {ssh: ...}` gives the SSH target.
 
 ## Product rules
 

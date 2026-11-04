@@ -9,6 +9,7 @@ from filescan.dedupe.duplicates import run_duplicates
 from filescan.execution.mover import run_execution
 from filescan.inventory.preflight import check_db_space, check_stale_roots
 from filescan.inventory.scanner import run_scan
+from filescan.inventory.server_import import run_import_server
 from filescan.planning.artifacts import load_plan_artifact
 from filescan.planning.proposals import build_plan_artifact
 from filescan.reporting.exclusions import run_exclusions_report
@@ -53,6 +54,10 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("report")
     subparsers.add_parser("waste")
     subparsers.add_parser("largest")
+    subparsers.add_parser(
+        "import-server",
+        help="List the server roots with fsagent over SSH and load them into the database.",
+    )
     subparsers.add_parser(
         "exclusions-report",
         help="List the folders each exclusion rule leaves out of the organised set, with sizes (CSV).",
@@ -156,7 +161,7 @@ def main(argv: list[str] | None = None) -> int:
     _validate_database(args.config)
     config = load_config(args.config)
 
-    if args.command != "scan":
+    if args.command not in ("scan", "import-server"):
         check_stale_roots(config)
 
     if args.command == "run":
@@ -195,6 +200,9 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "largest":
         _stage_start("largest")
         run_largest(args.config)
+    elif args.command == "import-server":
+        _stage_start("import-server")
+        run_import_server(args.config)
     elif args.command == "exclusions-report":
         _stage_start("exclusions-report")
         print(run_exclusions_report(args.config))

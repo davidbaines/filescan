@@ -32,8 +32,8 @@ def test_roots_default_to_pc_source_and_parse_roles(tmp_path: Path) -> None:
             {
                 "roots": [
                     {"path": "C:/Users/David", "skip": ["AppData"]},
-                    {"path": "//192.168.1.133/disk3", "location": "server"},
-                    {"path": "//192.168.1.133/disk2", "location": "server", "role": "master"},
+                    {"path": "//192.168.1.133/disk3", "location": "server", "server_path": "/srv/x"},
+                    {"path": "//192.168.1.133/disk2", "location": "server", "server_path": "/srv/x", "role": "master"},
                 ]
             },
         )
@@ -95,7 +95,7 @@ def test_scanner_skips_server_roots_and_root_skip_paths(tmp_path: Path, monkeypa
                     {"path": str(pc_root), "skip": ["AppData"]},
                     # Server roots are listed by fsagent, never walked; a local
                     # folder stands in for the UNC share here.
-                    {"path": str(server_root), "location": "server"},
+                    {"path": str(server_root), "location": "server", "server_path": "/srv/x"},
                 ]
             },
         )
@@ -124,7 +124,7 @@ def test_duplicate_detector_ignores_files_under_server_roots(tmp_path: Path) -> 
         _write(
             tmp_path,
             {
-                "roots": [{"path": str(pc_root)}, {"path": str(server_root), "location": "server"}],
+                "roots": [{"path": str(pc_root)}, {"path": str(server_root), "location": "server", "server_path": "/srv/x"}],
                 "duplicate_size_threshold": 1,
             },
         )

@@ -118,11 +118,12 @@ class _Progress:
     def report(self, final: bool = False) -> None:
         elapsed = max(time.monotonic() - self.started, 1e-6)
         total = f"/{self.total:,}" if self.total is not None else ""
-        rate = self.bytes / elapsed / 1e6
+        # Listing reads no file data, so a byte rate would be meaningless there.
+        rate = "" if self.label == "list" else f"{self.bytes / elapsed / 1e6:.0f} MB/s, "
         tag = "done" if final else "..."
         print(
             f"[{self.label}] {self.count:,}{total} items, {self.bytes / 1e9:.2f} GB, "
-            f"{rate:.0f} MB/s, {elapsed:.0f}s {tag}",
+            f"{rate}{elapsed:.0f}s {tag}",
             file=sys.stderr,
             flush=True,
         )

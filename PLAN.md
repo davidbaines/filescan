@@ -112,7 +112,7 @@ Files are scattered across the PC (C: user folders, D:, E:, F:), the LaCie J: an
   - [x] **`.git` removed from `exclude_folders`** in the test fixture; the code default was already empty.
     - [ ] Remove it from `C:\filescan\config.yml` while setting up the Phase 2 roots.
   - [x] **A root's location decides which stage handles it.** The scanner walks only PC roots, the duplicate detector never hashes files under server roots, and the space preflight counts only PC roots. `normalize_path` no longer resolves UNC paths, which would mean a network round trip.
-    - [ ] Marking missing files for server roots happens in `import-server` (Phase 2).
+    - [x] Marking missing files for server roots happens in `import-server`.
 - [x] **Cloud placeholders.** The scanner stores `attributes`, and the duplicate detector skips placeholders. Listing them in the Phase 3 and exclusion reports is still to do.
   - iCloudDrive has 23 placeholder files and OneDrive 16 (`RECALL_ON_DATA_ACCESS`), and reading one downloads it.
   - Store `st_file_attributes` in the scanner, which costs nothing on Windows, and never hash files flagged `RECALL_ON_DATA_ACCESS` (0x400000), `RECALL_ON_OPEN` (0x40000) or `OFFLINE` (0x1000).
@@ -134,7 +134,9 @@ Files are scattered across the PC (C: user folders, D:, E:, F:), the LaCie J: an
   - server sources: disk1, disk3 (Evelyn excluded);
   - master: disk2.
 - [ ] `filescan scan --rescan` the PC roots.
-- [ ] `filescan import-server` (runs `fsagent list`).
+- [ ] `filescan import-server` (runs `fsagent list`). The command is written and tested; a trial import of `diskd/music` into a scratch database gave 1,039 files, 135 folders and 0 errors. The full run waits for the config step above.
+  - Server roots need `server_path` and may list `exclude_dirs` (for example `lost+found`); the SSH target is the top-level `server: {ssh: david@192.168.1.133}`.
+  - A failed or empty listing raises an error before anything is marked missing.
   - Convert the server's `mtime_ns` to the stored float in one shared function. The stale-hash check compares mtimes exactly, so any drift would clear every server hash on each re-import.
 
 ### Phase 3: task 2, which files the server lacks

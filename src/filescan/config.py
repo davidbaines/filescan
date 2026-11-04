@@ -67,7 +67,18 @@ def _parse_root(item: dict[str, Any]) -> RootConfig:
     if not isinstance(skip_raw, list):
         raise ValueError(f"Root {root_path}: 'skip' must be a list of folders relative to the root.")
     skip = tuple(root_path / str(entry) for entry in skip_raw)
-    return RootConfig(path=root_path, location=location, role=role, skip=skip)  # type: ignore[arg-type]
+    server_path = item.get("server_path")
+    if location == "server" and not server_path:
+        raise ValueError(f"Root {root_path}: a server root needs 'server_path', its POSIX mount point on the server.")
+    exclude_dirs = tuple(str(name) for name in (item.get("exclude_dirs") or []))
+    return RootConfig(  # type: ignore[arg-type]
+        path=root_path,
+        location=location,
+        role=role,
+        skip=skip,
+        server_path=str(server_path).rstrip("/") if server_path else None,
+        exclude_dirs=exclude_dirs,
+    )
 
 
 def _parse_exclusions(raw: Any) -> tuple[ExclusionRule, ...]:
@@ -137,6 +148,7 @@ def load_config(config_path: str | Path) -> ScanConfig:
         database = _require_mapping(data.get("database", {}), message="'database' must be a mapping.")
         database_path_raw = database.get("path")
 
+    server_settings = _require_mapping(data.get("server") or {}, message="'server' must be a mapping.")
     scan_filters = _require_mapping(data.get("scan_filters", {}), message="'scan_filters' must be a mapping.")
     analysis = _require_mapping(data.get("analysis", {}), message="'analysis' must be a mapping.")
 
@@ -187,4 +199,6 @@ def load_config(config_path: str | Path) -> ScanConfig:
         root_configs=root_configs,
         exclusions=_parse_exclusions(data.get("exclusions")),
         pinned=tuple(normalize_path(item) for item in (data.get("pinned") or [])),
+        server_ssh=str(server_settings.get("ssh", "")),
+        server_python=str(server_settings.get("python", "python3")),
     )
