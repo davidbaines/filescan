@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from pathlib import Path
 
 from filescan.models import DuplicateGroup, FileRecord, FolderRecord, FolderSimilarityCandidate
@@ -246,25 +245,30 @@ class FileRepository:
             yield self._folder_from_row(row)
 
     @staticmethod
-    def _outside_roots_clause(roots: list[Path]) -> tuple[str, list[str]]:
-        clause = ""
-        params: list[str] = []
-        for root in roots:
-            clause += " AND NOT (files.path = ? OR files.path LIKE ? ESCAPE '|')"
-            params.extend(path_prefix(root))
-        return clause, params
+    def _hashed_only_clause(roots: list[Path]) -> tuple[str, list[str]]:
+        """SQL keeping files under `roots` only when they already have a full hash."""
+        if not roots:
+            return "", []
+        under = " OR ".join("(files.path = ? OR files.path LIKE ? ESCAPE '|')" for _ in roots)
+        params = [value for root in roots for value in path_prefix(root)]
+        return f" AND (NOT ({under}) OR file_hashes.full_hash IS NOT NULL)", params
 
-    def duplicate_size_groups(self, *, min_size: int = 1, exclude_roots: list[Path] = ()) -> list[tuple[int, int]]:
+    def duplicate_size_groups(
+        self, *, min_size: int = 1, hashed_only_roots: list[Path] = ()
+    ) -> list[tuple[int, int]]:
         """Return (size, file_count) for every size shared by two or more active files.
 
-        Cloud placeholders and files under `exclude_roots` are left out.
+        Cloud placeholders are left out. Files under `hashed_only_roots` (the
+        server) count only if they already have a full hash, because filescan
+        never reads server files itself.
         """
-        outside, params = self._outside_roots_clause(list(exclude_roots))
+        outside, params = self._hashed_only_clause(list(hashed_only_roots))
         rows = self.db.conn.execute(
             f"""
             SELECT files.size AS size, COUNT(*) AS file_count
             FROM files
             JOIN folders ON folders.id = files.folder_id
+            LEFT JOIN file_hashes ON file_hashes.file_id = files.id
             WHERE files.is_missing = 0
               AND folders.is_missing = 0
               AND files.size >= ?
@@ -278,8 +282,8 @@ class FileRepository:
         )
         return [(int(row["size"]), int(row["file_count"])) for row in rows]
 
-    def files_of_size(self, size: int, *, exclude_roots: list[Path] = ()) -> list[FileRecord]:
-        outside, params = self._outside_roots_clause(list(exclude_roots))
+    def files_of_size(self, size: int, *, hashed_only_roots: list[Path] = ()) -> list[FileRecord]:
+        outside, params = self._hashed_only_clause(list(hashed_only_roots))
         rows = self.db.conn.execute(
             f"""
             SELECT files.id, files.folder_id, folders.path AS folder_path, files.filename, files.path, files.size,

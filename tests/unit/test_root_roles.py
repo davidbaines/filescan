@@ -181,3 +181,38 @@ def test_space_estimate_counts_each_drive_once(tmp_path: Path, monkeypatch) -> N
 
     assert len(calls) == 1
     assert files == 400 * 10**9 // preflight._AVG_FILE_SIZE_BYTES
+
+
+def test_duplicate_groups_include_server_files_that_already_have_hashes(tmp_path: Path) -> None:
+    from filescan.dedupe.duplicates import DuplicateDetector
+    from filescan.dedupe.hashing import full_hash
+    from tests.helpers.indexing import index_paths
+
+    pc_root = tmp_path / "pc"
+    server_root = tmp_path / "server"
+    pc_files = build_tree(pc_root, {"x/a.bin": b"shared bytes", "y/solo.bin": b"other bytes!"})
+    server_files = build_tree(server_root, {"hashed.bin": b"shared bytes", "unhashed.bin": b"other bytes!"})
+    config = load_config(
+        _write(
+            tmp_path,
+            {
+                "roots": [{"path": str(pc_root)},
+                          {"path": str(server_root), "location": "server", "server_path": "/srv/x"}],
+                "duplicate_size_threshold": 1,
+            },
+        )
+    )
+    db = SQLiteDB(config.database_path)
+    repo = FileRepository(db)
+    index_paths(repo, pc_root, pc_files)
+    index_paths(repo, server_root, server_files)
+    hashed = next(f for f in repo.list_active_files() if f.filename == "hashed.bin")
+    repo.upsert_file_hash(hashed.id, full_hash=full_hash(server_root / "hashed.bin"))  # as fsagent would
+
+    groups = DuplicateDetector(config).run()
+
+    assert [sorted(f.filename for f in g.files) for g in groups] == [["a.bin", "hashed.bin"]]
+    rows = {r[0]: r[1] for r in db.conn.execute(
+        "SELECT f.filename, h.full_hash FROM files f LEFT JOIN file_hashes h ON h.file_id = f.id")}
+    assert rows["unhashed.bin"] is None  # server files are never hashed over the network
+    db.close()

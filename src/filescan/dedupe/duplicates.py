@@ -38,6 +38,14 @@ class DuplicateDetector:
         hash_name = "full" if full else "quick"
         print(f"Skipping {hash_name} hash for {path}: {exc}")
 
+    @staticmethod
+    def _is_server(path: Path, server_roots: list[Path]) -> bool:
+        text = str(path).lower()
+        return any(
+            text == str(r).lower().rstrip("\\") or text.startswith(str(r).lower().rstrip("\\") + "\\")
+            for r in server_roots
+        )
+
     def _populate_hashes(
         self, repo: FileRepository, files: list[FileRecord], *, full: bool, bar, pool: ThreadPoolExecutor
     ) -> None:
@@ -80,7 +88,7 @@ class DuplicateDetector:
         # Server files are hashed on the server by fsagent, never over SMB.
         server_roots = self.config.server_roots
         size_groups = repo.duplicate_size_groups(
-            min_size=self.config.duplicate_size_threshold, exclude_roots=server_roots
+            min_size=self.config.duplicate_size_threshold, hashed_only_roots=server_roots
         )
         total_candidate_files = sum(count for _, count in size_groups)
         print(f"  {len(size_groups):,} shared sizes covering {total_candidate_files:,} files")
@@ -93,13 +101,19 @@ class DuplicateDetector:
             ThreadPoolExecutor(max_workers=self.config.worker_count) as pool,
         ):
             for size, count in size_groups:
-                group = repo.files_of_size(size, exclude_roots=server_roots)
-                self._populate_hashes(repo, group, full=False, bar=quick_bar, pool=pool)
-                by_quick: dict[str, list[FileRecord]] = defaultdict(list)
-                for file_record in group:
-                    if file_record.quick_hash is not None:
-                        by_quick[file_record.quick_hash].append(file_record)
-                for candidate in by_quick.values():
+                group = repo.files_of_size(size, hashed_only_roots=server_roots)
+                if any(self._is_server(f.path, server_roots) for f in group):
+                    # Server files carry only fsagent's full hash, so compare this
+                    # size group on full hashes; local files are hashed as needed.
+                    candidates = [group]
+                else:
+                    self._populate_hashes(repo, group, full=False, bar=quick_bar, pool=pool)
+                    by_quick: dict[str, list[FileRecord]] = defaultdict(list)
+                    for file_record in group:
+                        if file_record.quick_hash is not None:
+                            by_quick[file_record.quick_hash].append(file_record)
+                    candidates = list(by_quick.values())
+                for candidate in candidates:
                     if len(candidate) < 2:
                         continue
                     self._populate_hashes(repo, candidate, full=True, bar=full_bar, pool=pool)
