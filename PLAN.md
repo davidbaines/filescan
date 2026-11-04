@@ -139,7 +139,7 @@ Files are scattered across the PC (C: user folders, D:, E:, F:), the LaCie J: an
   - A new database is needed because the April one has active rows for the whole of `C:\` (Windows, Program Files, paths found by following junctions). The new roots would never mark those rows missing, so duplicate detection would hash them all.
   - Roots: PC `C:\Users\David` (AppData skipped), `D:\`, `E:\`, `F:\`, `J:\`; server sources disk1 and disk3; master disk2.
   - Evelyn, MT and Paratext_Projects are exclusions with `disposition: keep-in-place`. `.Trash-1000` is inventoried for review. `.git` is not excluded. The threshold is 1 byte.
-- [ ] `filescan scan --rescan` the PC roots.
+- [x] `filescan scan --rescan` the PC roots. Done on 4 November in 49 minutes: 5.2 million files.
 - [x] `filescan import-server` (runs `fsagent list`). Imported 1,301,682 files in 132,367 folders on 4 November, with no errors. One name Windows cannot represent, in the Trash, was skipped. The command is written and tested; a trial import of `diskd/music` into a scratch database gave 1,039 files, 135 folders and 0 errors. The full run waits for the config step above.
   - Server roots need `server_path` and may list `exclude_dirs` (for example `lost+found`); the SSH target is the top-level `server: {ssh: david@192.168.1.133}`.
   - A failed or empty listing raises an error before anything is marked missing.
@@ -150,12 +150,16 @@ Files are scattered across the PC (C: user folders, D:, E:, F:), the LaCie J: an
 
 - [x] Prune by size: only sizes found on both the PC and the server become candidates (`filescan compare`).
 - [x] Hash the PC candidates locally, and the server candidates with `fsagent hash` (`inventory/server_hash.py`), then import the results. A server hash is stored only if the file's size and mtime still match the inventory, and `fsagent hash` re-hashes files changed since an earlier result.
-  - [ ] Run it for real once the inventory is complete.
+  - [x] Run it for real once the inventory is complete. Done on 4 November in 6 hours: the PC hashed 3.83 million files in 4 h 10 min, and the server hashed 1.17 million, with no stale results or errors.
+    - PC files with no identical copy on the server, outside the exclusions: 1.96 TB in 2.15 million files. Counted once per name and size, that is about 1.0 TB, close to the earlier 0.91 TB estimate. Nearly all of it (1.91 TB) has no file of the same size on the server.
+    - Largest top folders: `F:\Data` 348 GB, `J:\Photos` 286 GB, `C:\Users\David\Pictures` 276 GB, `F:\Photos` 265 GB, `E:\Picasa` 202 GB.
+    - 195,795 PC files could not be read (permission denied), almost all under `D:\Windows` and `D:\Program Files`, which are excluded anyway.
+    - Exclusions report: public corpora 536 GB, Acronis 440 GB, Evelyn 182 GB, app caches 128 GB, old OS root 108 GB, Backblaze-hosted 103 GB, old OS in backups 61 GB.
 - [x] **Let duplicate groups include server files.** Done: server files with a full hash join their size group, which is then compared on full hashes. Server files without one are left out and never read. Today the detector leaves server files out of grouping entirely, not just out of hashing. Similarity (55% weight on shared duplicates) and clusters would then never link a PC tree to a server tree, which breaks Phase 5.
   - Rule: never compute a hash for a server file, but do group server files that already have a full hash from `fsagent`.
   - `fsagent` supplies only full hashes, so a size group that includes server files skips the quick-hash prefilter for them.
 - [x] New command `filescan compare`. It writes `compare_missing_files.csv` (status, exclusion rule, size, path) and `compare_summary.csv` (totals per top folder, with excluded bytes split out) rather than XLSX, because the file list may run to millions of rows. Statuses are `no-size-match`, `content-differs`, `not-hashed` and `cloud-placeholder`.
-- [ ] Run `fsagent hash` on server-only size groups, about 1.8 TB, overnight.
+- [ ] Run `fsagent hash` on server-only size groups (`filescan hash-server`). Started 4 November at 10:36. disk1 is finished (16,589 files); disk3 has 69,565 files, 1.39 TB, hashing at about 70 MB/s.
 
 ### Phase 4: unwanted data, rules layer
 
