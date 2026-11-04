@@ -35,7 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     scan_parser = subparsers.add_parser("scan")
     scan_parser.add_argument("--rescan", action="store_true", help="Re-scan roots even if they were already scanned.")
-    scan_parser.add_argument("--delta", action="store_true", help="Fast update: skip folders whose mtime is unchanged since last scan.")
+    scan_parser.add_argument("--delta", action="store_true", help="Fast update: skip folders whose mtime is unchanged since last scan. Misses files edited in place; use --rescan before comparing or hashing.")
 
     duplicates_parser = subparsers.add_parser("duplicates")
     duplicates_parser.add_argument("--rescan", action="store_true", help="Rebuild duplicate analysis even if cached results exist.")

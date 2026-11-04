@@ -14,18 +14,20 @@ def test_scan_folder_logs_inaccessible_folder_once(tmp_path: Path, write_config,
     config = load_config(write_config([root]))
     scanner = InventoryScanner(config, rescan=True)
     logged: list[tuple[str, Path, str]] = []
-    original_iterdir = Path.iterdir
+    import os
 
-    def failing_iterdir(path: Path):
-        if path == restricted:
+    original_scandir = os.scandir
+
+    def failing_scandir(path):
+        if Path(path) == restricted:
             raise PermissionError("simulated access denied")
-        return original_iterdir(path)
+        return original_scandir(path)
 
     def capture_log(*, kind: str, path: Path, exc: OSError) -> None:
         InventoryScanner._log_skip(scanner, kind=kind, path=path, exc=exc)
         logged.append((kind, path, str(exc)))
 
-    monkeypatch.setattr(Path, "iterdir", failing_iterdir)
+    monkeypatch.setattr("filescan.inventory.scanner.os.scandir", failing_scandir)
     monkeypatch.setattr(scanner, "_log_skip", capture_log)
 
     result = scanner._scan_folder(restricted, root, 1)
@@ -84,3 +86,82 @@ def test_scan_deduplicates_repeated_subdirectories_in_queue(tmp_path: Path, writ
 
     assert calls.count(root) == 1
     assert calls.count(child) == 1
+
+
+def _make_junction(link: Path, target: Path) -> None:
+    import subprocess
+
+    subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], check=True, capture_output=True)
+
+
+def test_scan_skips_junctions_instead_of_following_them(tmp_path: Path, write_config) -> None:
+    from filescan.storage import FileRepository, SQLiteDB
+    from tests.helpers.tree_builder import build_tree
+
+    root = tmp_path / "root"
+    outside = tmp_path / "outside"
+    build_tree(root, {"real/a.txt": b"aaaa"})
+    build_tree(outside, {"b.txt": b"bbbb"})
+    _make_junction(root / "link_out", outside)
+    _make_junction(root / "link_in", root / "real")
+    config = load_config(write_config([root]))
+
+    InventoryScanner(config, rescan=True).scan()
+
+    db = SQLiteDB(config.database_path)
+    paths = sorted(record.path.name for record in FileRepository(db).list_active_files())
+    stored = [row[0] for row in db.conn.execute("SELECT path FROM files")]
+    db.close()
+    assert paths == ["a.txt"]
+    assert all(str(root) in path for path in stored)
+
+
+def test_rescan_detects_in_place_edit_when_folder_mtime_is_unchanged(tmp_path: Path, write_config) -> None:
+    import os
+
+    from filescan.storage import FileRepository, SQLiteDB
+    from tests.helpers.tree_builder import build_tree
+
+    root = tmp_path / "root"
+    build_tree(root, {"docs/report.txt": b"version one"})
+    target = root / "docs" / "report.txt"
+    config = load_config(write_config([root]))
+    InventoryScanner(config, rescan=True).scan()
+
+    db = SQLiteDB(config.database_path)
+    repo = FileRepository(db)
+    record = repo.list_active_files()[0]
+    repo.upsert_file_hash(record.id, quick_hash="q", full_hash="f")
+    db.close()
+
+    folder_times = (target.parent.stat().st_atime, target.parent.stat().st_mtime)
+    target.write_bytes(b"version two, edited in place")
+    os.utime(target.parent, folder_times)
+
+    InventoryScanner(config, rescan=True).scan()
+
+    db = SQLiteDB(config.database_path)
+    record = FileRepository(db).list_active_files()[0]
+    db.close()
+    assert record.size == len(b"version two, edited in place")
+    assert record.full_hash is None
+
+
+def test_records_read_from_database_do_not_touch_filesystem(tmp_path: Path, write_config, monkeypatch) -> None:
+    from filescan.storage import FileRepository, SQLiteDB
+    from tests.helpers.tree_builder import build_tree
+
+    root = tmp_path / "root"
+    build_tree(root, {"a/b.txt": b"bbbb"})
+    config = load_config(write_config([root]))
+    InventoryScanner(config, rescan=True).scan()
+
+    def no_resolve(self, strict=False):
+        raise AssertionError(f"resolve() called for {self}")
+
+    monkeypatch.setattr(Path, "resolve", no_resolve)
+    db = SQLiteDB(config.database_path)
+    repo = FileRepository(db)
+    assert [f.path.name for f in repo.list_active_files()] == ["b.txt"]
+    assert len(repo.list_active_folders()) == 2
+    db.close()

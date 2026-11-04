@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections import defaultdict
 from pathlib import Path
 
-from filescan.inventory.normalizer import normalize_path
 from filescan.models import DuplicateGroup, FileRecord, FolderRecord, FolderSimilarityCandidate
 from filescan.storage.db import SQLiteDB
 from filescan.storage.sql import path_prefix
@@ -28,7 +27,7 @@ class FileRepository:
         return path_prefix(root)
 
     def get_folder_id(self, folder_path: Path) -> int | None:
-        normalized = normalize_path(folder_path)
+        normalized = Path(folder_path)
         cached = self._folder_cache.get(normalized)
         if cached is not None:
             return cached
@@ -216,10 +215,10 @@ class FileRepository:
     def _folder_from_row(self, row) -> FolderRecord:
         return FolderRecord(
             id=int(row["id"]),
-            path=normalize_path(row["path"]),
+            path=Path(row["path"]),
             drive=str(row["drive"]),
             parent_id=row["parent_id"],
-            parent_path=normalize_path(row["parent_path"]) if row["parent_path"] else None,
+            parent_path=Path(row["parent_path"]) if row["parent_path"] else None,
             depth=int(row["depth"]),
             file_count=int(row["file_count"]),
             total_bytes=int(row["total_bytes"]),
@@ -263,8 +262,8 @@ class FileRepository:
         return FileRecord(
             id=int(row["id"]),
             folder_id=int(row["folder_id"]),
-            path=normalize_path(row["path"]),
-            folder_path=normalize_path(row["folder_path"]),
+            path=Path(row["path"]),
+            folder_path=Path(row["folder_path"]),
             filename=str(row["filename"]),
             size=int(row["size"]),
             mtime=float(row["mtime"]),
@@ -377,8 +376,8 @@ class FileRepository:
                 FileRecord(
                     id=int(row["file_id"]),
                     folder_id=int(row["folder_id"]),
-                    folder_path=normalize_path(row["folder_path"]),
-                    path=normalize_path(row["path"]),
+                    folder_path=Path(row["folder_path"]),
+                    path=Path(row["path"]),
                     filename=str(row["filename"]),
                     size=int(row["size"]),
                     mtime=float(row["mtime"]),
@@ -442,8 +441,8 @@ class FileRepository:
                 id=int(row["id"]),
                 folder_a_id=int(row["folder_a_id"]),
                 folder_b_id=int(row["folder_b_id"]),
-                folder_a=normalize_path(row["folder_a_path"]),
-                folder_b=normalize_path(row["folder_b_path"]),
+                folder_a=Path(row["folder_a_path"]),
+                folder_b=Path(row["folder_b_path"]),
                 score=float(row["score"]),
                 shared_duplicate_files=int(row["shared_duplicate_files"]),
                 shared_signatures=int(row["shared_signatures"]),

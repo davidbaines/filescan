@@ -99,10 +99,10 @@ Files are scattered across the PC (C: user folders, D:, E:, F:), the LaCie J: an
 ### Phase 1: fixes to filescan before any rescan (TDD)
 
 - [x] **Stale hashes.** In `storage/repositories.py` `upsert_files`, delete a file's `file_hashes` row when its size or mtime changes.
-- [ ] **Delta scans miss in-place edits.** Add `scan --verify-files`, which compares each file's size and mtime even when the folder's mtime hasn't changed.
+- [x] **Delta scans miss in-place edits.** Resolved without a new flag: `--rescan` reads every file and, with the stale-hash fix, invalidates edited files (tested). `--delta` help now warns that it misses in-place edits.
 - [x] **LIKE wildcards.** Write one helper that escapes `_`, `%` and `\` and uses `ESCAPE`, and use it in `_path_prefix`, `clusters.py` and the waste detector.
-- [ ] **Resolving every path.** Call `normalize_path` with `.resolve()` only for config roots. Paths read back from the database become plain `Path(...)`.
-- [ ] **Scanner round trips.** Switch `_scan_folder` to `os.scandir`, which is a documented exception to the pathlib rule. Drop the full pre-walk in `_count_folders` for network roots.
+- [x] **Resolving every path.** Call `normalize_path` with `.resolve()` only for config roots. Paths read back from the database become plain `Path(...)`.
+- [x] **Scanner round trips.** Switch `_scan_folder` to `os.scandir`, which is a documented exception to the pathlib rule. Drop the full pre-walk in `_count_folders` for network roots. Junctions and symlinks are now skipped rather than followed and resolved.
 - [ ] **Hashing at scale.** Make `DuplicateDetector.run` group by size in SQL, streaming one size group at a time. Set the threshold to 1 byte in `C:\filescan\config.yml`.
 - [ ] **Root roles.**
   - Each root gets `location: pc | server` and `role: source | master | excluded`.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -15,11 +16,12 @@ from filescan.storage import FileRepository, SQLiteDB
 _MIN_FREE_DB_BYTES = 500 * 1024 * 1024  # 500 MB hard floor
 
 
-def _is_dir_safe(path: Path) -> bool:
+def _is_link(entry: os.DirEntry) -> bool:
+    """True for symlinks and NTFS junctions, which the scanner never follows."""
     try:
-        return path.is_dir()
+        return entry.is_symlink() or entry.is_junction()
     except OSError:
-        return False
+        return True
 
 # Windows error codes that are expected during a system-wide scan and logged silently.
 _SILENT_WINERRORS: frozenset[int] = frozenset({
@@ -49,8 +51,7 @@ class InventoryScanner:
     def _log_skip(self, *, kind: str, path: Path, exc: OSError) -> None:
         if getattr(exc, "winerror", None) in _SILENT_WINERRORS:
             return
-        normalized_path = normalize_path(path)
-        key = (kind, normalized_path, str(exc))
+        key = (kind, Path(path), str(exc))
         if key in self._logged_skips:
             return
         self._logged_skips.add(key)
@@ -66,12 +67,18 @@ class InventoryScanner:
     def _excluded_folder(self, path: Path) -> bool:
         return path.name in self.config.exclude_folders
 
-    def _excluded_file(self, path: Path) -> object | None:
-        suffix = path.suffix.lower()
-        if suffix in self.config.exclude_extensions:
+    def _accepted_file_stat(self, entry: os.DirEntry) -> os.stat_result | None:
+        """Return the entry's stat if the file passes the size and extension filters.
+
+        On Windows the stat comes from the directory listing, so this costs no
+        extra filesystem call, which matters on network shares.
+        """
+        if Path(entry.name).suffix.lower() in self.config.exclude_extensions:
             return None
-        stat = self._safe_stat(path, kind="file")
-        if stat is None:
+        try:
+            stat = entry.stat(follow_symlinks=False)
+        except OSError as exc:
+            self._log_skip(kind="file", path=Path(entry.path), exc=exc)
             return None
         size = stat.st_size
         if size < self.config.min_file_size:
@@ -80,51 +87,56 @@ class InventoryScanner:
             return None
         return stat
 
+    def _list_folder(self, folder: Path) -> tuple[list[os.DirEntry], list[os.DirEntry]] | None:
+        """Split a folder's entries into (dirs, files), skipping links. None if unreadable."""
+        dirs: list[os.DirEntry] = []
+        files: list[os.DirEntry] = []
+        try:
+            with os.scandir(folder) as iterator:
+                for entry in iterator:
+                    if _is_link(entry):
+                        continue
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            dirs.append(entry)
+                        elif entry.is_file(follow_symlinks=False):
+                            files.append(entry)
+                    except OSError as exc:
+                        self._log_skip(kind="entry", path=Path(entry.path), exc=exc)
+        except OSError as exc:
+            self._log_skip(kind="folder", path=folder, exc=exc)
+            return None
+        return dirs, files
+
     def _scan_folder(self, folder: Path, root: Path, depth: int, stored_ts: float | None = None) -> ScanResult:
         if stored_ts is not None:
             try:
                 if folder.stat().st_mtime <= stored_ts:
-                    try:
-                        entries = list(folder.iterdir())
-                    except OSError as exc:
-                        self._log_skip(kind="folder", path=folder, exc=exc)
+                    listing = self._list_folder(folder)
+                    if listing is None:
                         return ScanResult(folder=None, files=[], subdirs=[], raw_dirs=0, raw_files=0)
-                    subdirs = [
-                        normalize_path(e) for e in entries
-                        if _is_dir_safe(e) and not self._excluded_folder(e)
-                    ]
+                    subdirs = [Path(e.path) for e in listing[0] if e.name not in self.config.exclude_folders]
                     return ScanResult(folder=None, files=[], subdirs=subdirs, raw_dirs=0, raw_files=0, skipped=True)
             except OSError:
                 pass  # can't stat — fall through to full scan
 
-        try:
-            entries = list(folder.iterdir())
-        except OSError as exc:
-            self._log_skip(kind="folder", path=folder, exc=exc)
+        listing = self._list_folder(folder)
+        if listing is None:
             return ScanResult(folder=None, files=[], subdirs=[], raw_dirs=0, raw_files=0)
+        all_dirs, all_files = listing
 
-        all_dirs: list[Path] = []
-        all_files: list[Path] = []
-        for entry in entries:
-            try:
-                if entry.is_dir():
-                    all_dirs.append(entry)
-                elif entry.is_file():
-                    all_files.append(entry)
-            except OSError as exc:
-                self._log_skip(kind="entry", path=entry, exc=exc)
-        subdirs = [normalize_path(entry) for entry in all_dirs if not self._excluded_folder(entry)]
+        subdirs = [Path(entry.path) for entry in all_dirs if entry.name not in self.config.exclude_folders]
         files: list[FileRecord] = []
         total_bytes = 0
         for entry in all_files:
-            stat = self._excluded_file(entry)
+            stat = self._accepted_file_stat(entry)
             if stat is None:
                 continue
             total_bytes += stat.st_size
             files.append(
                 FileRecord(
-                    path=normalize_path(entry),
-                    folder_path=normalize_path(folder),
+                    path=Path(entry.path),
+                    folder_path=folder,
                     filename=entry.name,
                     size=stat.st_size,
                     mtime=stat.st_mtime,
@@ -132,14 +144,13 @@ class InventoryScanner:
                 )
             )
         folder_stat = self._safe_stat(folder, kind="folder")
-        normalized_folder = normalize_path(folder)
         return ScanResult(
             folder=None
             if folder_stat is None
             else FolderRecord(
-                path=normalized_folder,
+                path=folder,
                 drive=root.drive,
-                parent_path=None if normalized_folder == root else normalize_path(folder.parent),
+                parent_path=None if folder == root else folder.parent,
                 depth=depth,
                 file_count=len(files),
                 total_bytes=total_bytes,
@@ -151,23 +162,37 @@ class InventoryScanner:
             raw_files=len(all_files),
         )
 
-    def _count_folders(self, root: Path) -> int:
-        """Fast metadata-only walk to count folders before the scan starts."""
+    def _count_folders(self, root: Path) -> int | None:
+        """Count folders before the scan so the progress bar has a total.
+
+        Network roots return None: a pre-walk would double the round trips.
+        """
+        if str(root).startswith("\\\\"):
+            return None
         count = 1  # root itself
         stack: list[Path] = [root]
         while stack:
-            folder = stack.pop()
-            try:
-                for entry in folder.iterdir():
+            listing = self._list_folder_quiet(stack.pop())
+            for entry in listing:
+                if entry.name not in self.config.exclude_folders:
+                    stack.append(Path(entry.path))
+                    count += 1
+        return count
+
+    @staticmethod
+    def _list_folder_quiet(folder: Path) -> list[os.DirEntry]:
+        dirs: list[os.DirEntry] = []
+        try:
+            with os.scandir(folder) as iterator:
+                for entry in iterator:
                     try:
-                        if entry.is_dir() and entry.name not in self.config.exclude_folders:
-                            stack.append(entry)
-                            count += 1
+                        if not _is_link(entry) and entry.is_dir(follow_symlinks=False):
+                            dirs.append(entry)
                     except OSError:
                         pass
-            except OSError:
-                pass
-        return count
+        except OSError:
+            pass
+        return dirs
 
     def _load_folder_scan_times(self, db: SQLiteDB) -> dict[Path, float]:
         """Pre-load folder paths → last_scanned_at as Unix timestamps for delta comparison."""
@@ -177,7 +202,7 @@ class InventoryScanner:
         ).fetchall():
             try:
                 ts = datetime.fromisoformat(row["last_scanned_at"]).replace(tzinfo=timezone.utc).timestamp()
-                result[normalize_path(row["path"])] = ts
+                result[Path(row["path"])] = ts
             except (ValueError, OSError):
                 pass
         return result
@@ -210,7 +235,7 @@ class InventoryScanner:
             else:
                 print(f"Counting folders in {root}...", end="", flush=True)
                 folder_count = self._count_folders(normalized_root)
-                print(f" {folder_count:,}")
+                print(" skipped (network root)" if folder_count is None else f" {folder_count:,}")
             queue: list[tuple[Path, int]] = [(normalized_root, 0)]
             visited: set[Path] = {normalized_root}
             total_folders = 1
