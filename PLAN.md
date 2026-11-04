@@ -126,23 +126,27 @@ Files are scattered across the PC (C: user folders, D:, E:, F:), the LaCie J: an
 
 - [x] Write `server/fsagent.py` (`list`, `hash`, `copy`, `hashfile`), with tests that run on Windows.
   - `list` needs no installation: `ssh david@192.168.1.133 python3 - list <root> < server/fsagent.py` streams the script, and a trial on `diskd/music` worked.
-- [ ] **[USER]** Install the helper: `sudo apt install python3-xxhash`, then copy `fsagent.py` to `~/fsagent/`.
+- [ ] **[USER]** Install xxhash on the server: `sudo apt install python3-xxhash`. Nothing else needs installing, because filescan streams `fsagent.py` over SSH. `hash` and `copy` keep resumable output in a work folder on the server, `~/fsagent-work/`, which Claude creates over SSH once you approve.
 - [ ] Check that the server's `xxh128` matches the PC's `hashing.full_hash` on the same file.
 - [ ] **[USER]** Create the SMB shares in the OMV web UI: `disk1` and `disk3` read-only, `disk2` read-write.
-- [ ] **[USER]** Review the exclusions report, then set the `config.yml` roots:
-  - PC sources: `C:\Users\David`, `D:\`, `E:\`, `F:\`, `J:\`;
-  - server sources: disk1, disk3 (Evelyn excluded);
-  - master: disk2.
+- [ ] **[USER]** Review the draft config `C:\filescan\v2\config.yml`, which uses a **new** database in `C:\filescan\v2\`. The April config and database stay untouched for reference.
+  - A new database is needed because the April one has active rows for the whole of `C:\` (Windows, Program Files, paths found by following junctions). The new roots would never mark those rows missing, so duplicate detection would hash them all.
+  - Roots: PC `C:\Users\David` (AppData skipped), `D:\`, `E:\`, `F:\`, `J:\`; server sources disk1 and disk3; master disk2.
+  - Evelyn, MT and Paratext_Projects are exclusions with `disposition: keep-in-place`. `.Trash-1000` is inventoried for review. `.git` is not excluded. The threshold is 1 byte.
 - [ ] `filescan scan --rescan` the PC roots.
 - [ ] `filescan import-server` (runs `fsagent list`). The command is written and tested; a trial import of `diskd/music` into a scratch database gave 1,039 files, 135 folders and 0 errors. The full run waits for the config step above.
   - Server roots need `server_path` and may list `exclude_dirs` (for example `lost+found`); the SSH target is the top-level `server: {ssh: david@192.168.1.133}`.
   - A failed or empty listing raises an error before anything is marked missing.
   - Convert the server's `mtime_ns` to the stored float in one shared function. The stale-hash check compares mtimes exactly, so any drift would clear every server hash on each re-import.
+- [ ] **Record what the import couldn't take.** Listing errors (such as permission denied) are only printed, and unrepresentable names only go to a CSV. Store both in the database, and make the gate before any wipe count them alongside the excluded bytes.
 
 ### Phase 3: task 2, which files the server lacks
 
 - [ ] Prune by size in SQL: only sizes found in both the source and the server groups become candidates.
 - [ ] Hash the PC candidates locally, and the server candidates with `fsagent hash`, then import the results.
+- [ ] **Let duplicate groups include server files.** Today the detector leaves server files out of grouping entirely, not just out of hashing. Similarity (55% weight on shared duplicates) and clusters would then never link a PC tree to a server tree, which breaks Phase 5.
+  - Rule: never compute a hash for a server file, but do group server files that already have a full hash from `fsagent`.
+  - `fsagent` supplies only full hashes, so a size group that includes server files skips the quick-hash prefilter for them.
 - [ ] New command `filescan compare`: an XLSX of the source files with no copy of the same content on the server, with totals per top folder.
 - [ ] Run `fsagent hash` on server-only size groups, about 1.8 TB, overnight.
 
