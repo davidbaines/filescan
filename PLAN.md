@@ -125,7 +125,7 @@ Files are scattered across the PC (C: user folders, D:, E:, F:), the LaCie J: an
   - Report them separately. Don't skip every reparse point, because files OneDrive keeps on the device are reparse points too.
 - [ ] **Batch the hash commits.** `upsert_file_hash` commits after every file. Commit every few hundred files or every few seconds instead, so a crash still loses at most the current batch.
 - [x] Python is pinned to 3.12 or later in `pyproject.toml`, so `DirEntry.is_junction()` is available.
-- [ ] **The fixture test fails on `main` too.** `test_report_fixture_contents.py` expects a `merge_folder` row. Find out with `git bisect` in a separate worktree whether the cluster work changed this deliberately (update the test) or broke it (fix the code). Make the test write its report to a temporary copy, so it stops dirtying the tracked fixture.
+- [x] **The fixture test fails on `main` too.** Fixed. Commit b168e56 deliberately turned `merge_folder` proposals into clusters, but the XLSX Plans sheet never listed clusters. The report now has `merge_cluster` rows, and the test approves clusters and runs on a copy of the fixture input; executing had been writing `.filescan-merged` markers into the tracked tree. Original note: `test_report_fixture_contents.py` expects a `merge_folder` row. Find out with `git bisect` in a separate worktree whether the cluster work changed this deliberately (update the test) or broke it (fix the code). Make the test write its report to a temporary copy, so it stops dirtying the tracked fixture.
 - [ ] **[GATE]** `pytest` passes.
 
 ### Phase 2: server setup and a fresh inventory

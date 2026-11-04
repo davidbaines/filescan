@@ -168,6 +168,21 @@ def write_report(config_path: str | Path) -> Path:
                     proposal["reason"],
                 ]
             )
+        for cluster in latest_plan.get("clusters", []):
+            master = next((m for m in cluster["members"] if m["is_master"]), None)
+            others = [m for m in cluster["members"] if not m["is_master"]]
+            unique_total = sum(m["unique_file_count"] for m in others)
+            plan_rows.append(
+                [
+                    latest_plan["plan_id"],
+                    cluster["cluster_id"],
+                    "merge_cluster",
+                    master["path"] if master else None,
+                    cluster["status"],
+                    f"Merge {len(others)} similar folder(s) into the main folder; "
+                    f"{unique_total} unique file(s) to copy (min score {cluster['min_score']}).",
+                ]
+            )
 
     execution_rows: list[list[object]] = [
         [

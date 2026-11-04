@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import zipfile
 from pathlib import Path
@@ -53,12 +54,15 @@ def test_report_contains_expected_rows_for_persistent_fixture() -> None:
         shutil.rmtree(runtime_folder, ignore_errors=True)
     runtime_folder.mkdir(parents=True, exist_ok=True)
 
+    # Execute writes into the scanned tree, so work on a copy of the fixture input.
+    input_root = runtime_folder / "root"
+    shutil.copytree(REPORT_INPUT_ROOT, input_root)
     filescan_folder = runtime_folder
     config_path = runtime_folder / "config.yml"
     config_path.write_text(
         yaml.safe_dump(
             {
-                "roots": [{"path": str(REPORT_INPUT_ROOT)}],
+                "roots": [{"path": str(input_root)}],
                 "filescan_folder": str(filescan_folder),
                 "database_folder": str(filescan_folder),
                 "database_filename": "file_index.db",
@@ -79,25 +83,27 @@ def test_report_contains_expected_rows_for_persistent_fixture() -> None:
     plan_artifacts = sorted(runtime_folder.glob("plan-*.json"))
     assert plan_artifacts
     plan_payload = json.loads(plan_artifacts[-1].read_text())
-    for proposal in plan_payload["proposals"]:
-        if proposal["action"] == "merge_folder":
-            proposal["approval_state"] = "approved"
+    assert plan_payload["clusters"], "fixture should produce at least one merge cluster"
+    for cluster in plan_payload["clusters"]:
+        cluster["status"] = "approved"
     plan_artifacts[-1].write_text(json.dumps(plan_payload, indent=2))
 
     assert main(["--config", str(config_path), "execute", "--plan", str(plan_artifacts[-1])]) == 0
     assert main(["--config", str(config_path), "report"]) == 0
 
-    generated_report_path = runtime_folder / "filescan_report.xlsx"
-    report_path = REPORT_OUTPUT / "filescan_report.xlsx"
-    shutil.copy2(generated_report_path, report_path)
+    report_path = runtime_folder / "filescan_report.xlsx"
     assert report_path.exists()
+    # Refresh the tracked copy for manual inspection only when asked, so routine
+    # test runs leave the working tree clean.
+    if os.environ.get("FILESCAN_UPDATE_FIXTURE") == "1":
+        shutil.copy2(report_path, REPORT_OUTPUT / "filescan_report.xlsx")
 
     rows = _sheet_rows(report_path)
 
     assert {"Summary", "Duplicates", "Similarity", "Plans", "Execution"} <= set(rows)
 
     summary_rows = rows["Summary"]
-    assert any(str(REPORT_INPUT_ROOT) in row for row in summary_rows)
+    assert any(str(input_root) in row for row in summary_rows)
 
     duplicate_rows = rows["Duplicates"]
     assert any("Project A readme" in " ".join(row) or "data.bin" in " ".join(row) for row in duplicate_rows)
@@ -107,7 +113,7 @@ def test_report_contains_expected_rows_for_persistent_fixture() -> None:
     assert any("projectA" in " ".join(row) and "projectB" in " ".join(row) for row in similarity_rows)
 
     plan_rows = rows["Plans"]
-    assert any("merge_folder" in row for row in plan_rows)
+    assert any("merge_cluster" in row and "approved" in row for row in plan_rows)
 
     execution_rows = rows["Execution"]
     assert any("completed" in row for row in execution_rows)

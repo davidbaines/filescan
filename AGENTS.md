@@ -109,7 +109,7 @@ The live configuration and database are in `C:\filescan` (`config.yml`, `file_in
 
 - `tests/unit/`: isolated unit tests, no disk I/O beyond temporary fixtures.
 - `tests/integration/`: full CLI pipeline tests using `tree_builder.build_tree()` to create synthetic file trees.
-- `tests/manual/report_fixture/`: a persistent dataset for manual XLSX inspection. Running the integration tests regenerates its report; don't commit that change unless the report format changed deliberately.
+- `tests/manual/report_fixture/`: a persistent dataset for manual XLSX inspection. The integration test runs on a temporary copy of `input/` and leaves the tracked files alone. To refresh `output/filescan_report.xlsx` after a deliberate report change, run the test with `FILESCAN_UPDATE_FIXTURE=1`.
 - `conftest.py` provides the `tmp_path` (Windows temp folder), `write_config` and `make_repo` fixtures.
 - The `test_*.py` files in the repository root belong to an older prototype and are not part of the suite; run `pytest tests`.
 
