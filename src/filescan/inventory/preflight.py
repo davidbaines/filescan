@@ -7,7 +7,7 @@ from filescan.models import ScanConfig
 from filescan.storage import SQLiteDB
 
 _BYTES_PER_FILE_ESTIMATE = 400
-_AVG_FILE_SIZE_BYTES = 50_000  # 50 KB — conservative; drives with large media files will be over-estimated
+_AVG_FILE_SIZE_BYTES = 200_000  # 200 KB; the April 2026 scan measured ~550 KB per file, so this over-estimates ~2.5x
 _ABORT_RATIO = 0.90
 _WARN_RATIO = 0.50
 
@@ -39,7 +39,14 @@ def check_db_space(config: ScanConfig) -> None:
 
 def _estimate(config: ScanConfig) -> tuple[int, int]:
     total_files = 0
-    for root in config.pc_roots:  # server roots are imported from fsagent, not scanned
+    # Server roots are imported from fsagent, not scanned. Drive usage is the
+    # only cheap figure, so each drive is counted once however many roots it has.
+    seen_drives: set[str] = set()
+    for root in config.pc_roots:
+        drive = (root.drive or str(root)).upper()
+        if drive in seen_drives:
+            continue
+        seen_drives.add(drive)
         try:
             used = shutil.disk_usage(root).used
             total_files += used // _AVG_FILE_SIZE_BYTES

@@ -159,3 +159,25 @@ def test_exclusion_disposition_defaults_and_validation(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="disposition"):
         load_config(_write(tmp_path, {"roots": [{"path": "D:/"}],
                                       "exclusions": [{"name": "z", "pattern": "z", "disposition": "delete"}]}))
+
+
+def test_space_estimate_counts_each_drive_once(tmp_path: Path, monkeypatch) -> None:
+    import shutil as shutil_module
+    from collections import namedtuple
+
+    from filescan.inventory import preflight
+
+    Usage = namedtuple("Usage", "total used free")
+    calls: list[str] = []
+
+    def fake_usage(path):
+        calls.append(str(path))
+        return Usage(10**12, 400 * 10**9, 10**11)
+
+    monkeypatch.setattr(shutil_module, "disk_usage", fake_usage)
+    config = load_config(_write(tmp_path, {"roots": [{"path": "C:/Users/David"}, {"path": "C:/Other"}]}))
+
+    files, _ = preflight._estimate(config)
+
+    assert len(calls) == 1
+    assert files == 400 * 10**9 // preflight._AVG_FILE_SIZE_BYTES
