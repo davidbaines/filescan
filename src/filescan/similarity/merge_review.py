@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
 
 from textual.app import App, ComposeResult
@@ -190,8 +189,9 @@ class MergeReviewApp(App[None]):
             return
         master = next((m for m in cluster["members"] if m["is_master"]), cluster["members"][0])
         try:
-            subprocess.Popen(["explorer.exe", master["path"]])
-        except OSError:
+            import os
+            os.startfile(master["path"])
+        except (OSError, AttributeError):
             pass
 
     def action_toggle_suppressed(self) -> None:
@@ -203,7 +203,9 @@ class MergeReviewApp(App[None]):
     def action_quit_save(self) -> None:
         payload = load_plan_artifact(self._plan_path)
         payload["clusters"] = self._all_clusters
-        self._plan_path.write_text(json.dumps(payload, indent=2))
+        temp_path = self._plan_path.with_suffix(".tmp")
+        temp_path.write_text(json.dumps(payload, indent=2))
+        temp_path.replace(self._plan_path)
         self.exit()
 
     def on_unmount(self) -> None:
@@ -222,7 +224,11 @@ def run_merge_review(config_path: Path, plan_path: Path | None = None) -> None:
     payload = load_plan_artifact(plan_path)
     clusters = payload.get("clusters", [])
     if not clusters:
-        print("Plan contains no folder clusters. Run 'filescan plan' first or check similarity results.")
+        if "clusters" not in payload:
+            print("Plan artifact is from an older format. Run 'filescan plan --replan' to regenerate.")
+        else:
+            print("No folder clusters found. Either no folder pairs scored above similarity_cluster_threshold (default 0.70),")
+            print("or all pairs were identified as backups. Check similarity results.")
         return
 
     db = SQLiteDB(config.database_path)

@@ -109,7 +109,7 @@ class ExecutionRunner:
                         if files_match(source_file, destination):
                             bar.update(1)
                             continue
-                        all_errors.append(f"Conflict: {destination} exists with different content")
+                        all_errors.append(f"Conflict: {destination} exists with different content (source: {source_file})")
                         copy_ok = False
                         all_verified = False
                         bar.update(1)
@@ -121,7 +121,7 @@ class ExecutionRunner:
                             total_copied += 1
                             total_bytes += destination.stat().st_size
                         else:
-                            all_errors.append(f"Verification failed after copy: {destination}")
+                            all_errors.append(f"Verification failed after copy: {destination} (source: {source_file})")
                             copy_ok = False
                             all_verified = False
                     except OSError as exc:

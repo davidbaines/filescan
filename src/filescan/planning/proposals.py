@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tqdm import tqdm
+
 from filescan.config import load_config
 from filescan.models import PlanProposal, ScanConfig
 from filescan.planning.artifacts import latest_plan_artifact, load_plan_artifact, write_plan_artifact
@@ -79,8 +81,8 @@ def _build_non_cluster_proposals(
     candidates = repo.list_similarity_candidates()
     proposals: list[PlanProposal] = []
     proposal_index = 0
-
-    for candidate in candidates:
+    print(f"  Processing {len(candidates)} similarity candidate(s)...")
+    for candidate in tqdm(candidates, desc="  Proposals", unit="candidate", leave=True):
         is_backup = candidate.score >= config.merge_threshold and candidate.name_bonus > 0
         is_cluster_eligible = candidate.score >= config.similarity_cluster_threshold and not is_backup
 
@@ -125,13 +127,16 @@ def build_plan_artifact(config_path: str | Path, *, replan: bool = False) -> Pat
 
     if not replan and latest_artifact_path is not None:
         payload = load_plan_artifact(latest_artifact_path)
-        if int(payload.get("scan_run_id") or 0) >= latest_scan_run_id and int(payload.get("similarity_scan_run_id") or 0) >= similarity_scan_run_id:
+        if (int(payload.get("scan_run_id") or 0) >= latest_scan_run_id
+                and int(payload.get("similarity_scan_run_id") or 0) >= similarity_scan_run_id
+                and "clusters" in payload):
             repo.set_stage_scan_run_id("plan", latest_scan_run_id)
             print("Skipping plan generation without --replan; existing artifact is current.")
             db.close()
             return latest_artifact_path
 
     proposals = _build_non_cluster_proposals(config, repo)
+    print(f"  Finding clusters...")
     clusters = build_clusters(config, db)
 
     artifact_path = write_plan_artifact(

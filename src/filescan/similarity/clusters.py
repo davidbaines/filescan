@@ -4,6 +4,8 @@ import json
 from collections import defaultdict
 from pathlib import Path
 
+from tqdm import tqdm
+
 from filescan.models import ClusterMember, FolderCluster, ScanConfig
 from filescan.storage import FileRepository, SQLiteDB
 
@@ -74,39 +76,48 @@ def _select_master(paths: list[Path], config: ScanConfig, db: SQLiteDB) -> Path:
 
 
 def _find_unique_files(db: SQLiteDB, folder_path: Path, master_path: Path) -> list[Path]:
-    """Return paths of files under folder_path not present (by full_hash) in master_path."""
-    folder_str = str(folder_path)
-    folder_like = folder_str.rstrip("\\") + "\\%"
-    master_str = str(master_path)
-    master_like = master_str.rstrip("\\") + "\\%"
+    """Return paths of files under folder_path not present in master_path.
 
-    rows = db.conn.execute(
-        """
-        SELECT f.path
+    Two matching strategies:
+    1. Full-hash match — reliable, handles renamed/moved files.
+    2. Relative-path + size match — fallback for files below the dedup threshold
+       that were never full-hashed (e.g. small tiddler files in TiddlyWiki stores).
+
+    Both stages use simple indexed SQL fetches; the comparison is done in Python to
+    avoid an O(n×m) SUBSTR cross-scan that can stall SQLite indefinitely.
+    """
+    _QUERY = """
+        SELECT f.path, f.size, fh.full_hash
         FROM files f
         JOIN folders fo ON fo.id = f.folder_id
         LEFT JOIN file_hashes fh ON fh.file_id = f.id
         WHERE (fo.path = ? OR fo.path LIKE ?)
           AND f.is_missing = 0
           AND fo.is_missing = 0
-          AND (
-            fh.full_hash IS NULL
-            OR fh.full_hash NOT IN (
-              SELECT fh2.full_hash
-              FROM files f2
-              JOIN folders fo2 ON fo2.id = f2.folder_id
-              LEFT JOIN file_hashes fh2 ON fh2.file_id = f2.id
-              WHERE (fo2.path = ? OR fo2.path LIKE ?)
-                AND f2.is_missing = 0
-                AND fo2.is_missing = 0
-                AND fh2.full_hash IS NOT NULL
-            )
-          )
-        ORDER BY f.path
-        """,
-        (folder_str, folder_like, master_str, master_like),
-    ).fetchall()
-    return [Path(row["path"]) for row in rows]
+    """
+    folder_str = str(folder_path).rstrip("\\")
+    master_str = str(master_path).rstrip("\\")
+
+    master_rows = db.conn.execute(_QUERY, (master_str, master_str + "\\%")).fetchall()
+    master_prefix_len = len(master_str) + 1
+    master_hashes: set[str] = set()
+    master_rel_size: set[tuple[str, int]] = set()
+    for row in master_rows:
+        if row["full_hash"]:
+            master_hashes.add(row["full_hash"])
+        master_rel_size.add((row["path"][master_prefix_len:], int(row["size"])))
+
+    folder_rows = db.conn.execute(_QUERY, (folder_str, folder_str + "\\%")).fetchall()
+    folder_prefix_len = len(folder_str) + 1
+    unique: list[Path] = []
+    for row in folder_rows:
+        if row["full_hash"] and row["full_hash"] in master_hashes:
+            continue
+        if (row["path"][folder_prefix_len:], int(row["size"])) in master_rel_size:
+            continue
+        unique.append(Path(row["path"]))
+
+    return sorted(unique)
 
 
 def recompute_unique_files(cluster: FolderCluster, new_master_path: Path, db: SQLiteDB) -> FolderCluster:
@@ -194,8 +205,9 @@ def build_clusters(config: ScanConfig, db: SQLiteDB) -> list[FolderCluster]:
     if not groups:
         return []
 
+    print(f"  Building {len(groups)} cluster(s) from {len(cluster_candidates)} candidate pair(s)...")
     clusters: list[FolderCluster] = []
-    for i, group in enumerate(sorted(groups, key=lambda g: sorted(g)), start=1):
+    for i, group in enumerate(tqdm(sorted(groups, key=lambda g: sorted(g)), desc="  Clusters", unit="cluster", leave=True), start=1):
         paths = sorted([Path(p) for p in group], key=str)
         path_strs = {str(p) for p in paths}
 
@@ -210,9 +222,18 @@ def build_clusters(config: ScanConfig, db: SQLiteDB) -> list[FolderCluster]:
 
         members: list[ClusterMember] = []
         for path in paths:
+            path_str = str(path)
+            path_like = path_str.rstrip("\\") + "\\%"
             row = db.conn.execute(
-                "SELECT file_count, total_bytes FROM folders WHERE path = ? AND is_missing = 0",
-                (str(path),),
+                """
+                SELECT COUNT(*) AS file_count, COALESCE(SUM(f.size), 0) AS total_bytes
+                FROM files f
+                JOIN folders fo ON fo.id = f.folder_id
+                WHERE (fo.path = ? OR fo.path LIKE ?)
+                  AND f.is_missing = 0
+                  AND fo.is_missing = 0
+                """,
+                (path_str, path_like),
             ).fetchone()
             file_count = int(row["file_count"]) if row else 0
             total_bytes = int(row["total_bytes"]) if row else 0

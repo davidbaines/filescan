@@ -10,7 +10,7 @@ from filescan.models import ExecutionResult, FolderCluster, PlanProposal
 
 
 def latest_plan_artifact(artifact_dir: Path) -> Path | None:
-    matches = sorted(artifact_dir.glob("plan-*.json"))
+    matches = sorted(artifact_dir.glob("plan-*.json"), key=lambda p: p.stat().st_mtime)
     if not matches:
         return None
     return matches[-1]
