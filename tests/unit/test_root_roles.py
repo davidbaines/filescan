@@ -140,3 +140,22 @@ def test_duplicate_detector_ignores_files_under_server_roots(tmp_path: Path) -> 
     hashed = {r[0] for r in db.conn.execute("SELECT f.filename FROM file_hashes h JOIN files f ON f.id = h.file_id")}
     assert "c.bin" not in hashed
     db.close()
+
+
+def test_exclusion_disposition_defaults_and_validation(tmp_path: Path) -> None:
+    config = load_config(
+        _write(
+            tmp_path,
+            {
+                "roots": [{"path": "D:/"}],
+                "exclusions": [
+                    {"name": "corpora", "pattern": "x"},
+                    {"name": "mt", "pattern": "y", "disposition": "keep-in-place"},
+                ],
+            },
+        )
+    )
+    assert [r.disposition for r in config.exclusions] == ["delete-candidate", "keep-in-place"]
+    with pytest.raises(ValueError, match="disposition"):
+        load_config(_write(tmp_path, {"roots": [{"path": "D:/"}],
+                                      "exclusions": [{"name": "z", "pattern": "z", "disposition": "delete"}]}))

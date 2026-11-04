@@ -53,6 +53,7 @@ def _require_mapping(value: Any, *, message: str) -> dict[str, Any]:
 
 _LOCATIONS = ("pc", "server")
 _ROLES = ("source", "master")
+_DISPOSITIONS = ("delete-candidate", "keep-in-place")
 
 
 def _parse_root(item: dict[str, Any]) -> RootConfig:
@@ -96,7 +97,12 @@ def _parse_exclusions(raw: Any) -> tuple[ExclusionRule, ...]:
             compiled = re.compile(str(pattern), re.IGNORECASE)
         except re.error as exc:
             raise ValueError(f"Invalid exclusion pattern for {name!r}: {exc}") from exc
-        rules.append(ExclusionRule(name=str(name), pattern=compiled, reason=str(item.get("reason", ""))))
+        disposition = str(item.get("disposition", "delete-candidate"))
+        if disposition not in _DISPOSITIONS:
+            raise ValueError(f"Exclusion {name!r}: disposition must be one of {_DISPOSITIONS}, got {disposition!r}.")
+        rules.append(
+            ExclusionRule(name=str(name), pattern=compiled, reason=str(item.get("reason", "")), disposition=disposition)
+        )
     return tuple(rules)
 
 

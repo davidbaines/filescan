@@ -80,4 +80,5 @@ def test_write_exclusions_report_writes_csv_with_totals(tmp_path: Path) -> None:
     text = out.read_text(encoding="utf-8")
     assert out.suffix == ".csv"
     assert "corpora" in text and "Gutenberg" in text and "20" in text
+    assert "delete-candidate" in text
     assert "Photos" not in text

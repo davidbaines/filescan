@@ -22,6 +22,7 @@ class ExcludedSubtree:
     rule: str
     reason: str
     path: Path
+    disposition: str = "delete-candidate"
     file_count: int = 0
     total_bytes: int = 0
 
@@ -62,7 +63,10 @@ def excluded_subtrees(db: SQLiteDB, config: ScanConfig) -> list[ExcludedSubtree]
             if ancestor in matched_paths:
                 top = ancestor
         if top == folder:
-            subtrees.setdefault(folder, ExcludedSubtree(rule=rule.name, reason=rule.reason, path=folder))
+            subtrees.setdefault(
+                folder,
+                ExcludedSubtree(rule=rule.name, reason=rule.reason, path=folder, disposition=rule.disposition),
+            )
     for folder, _rule, file_count, total_bytes in matched:
         top = folder
         for ancestor in folder.parents:
@@ -90,9 +94,12 @@ def write_exclusions_report(config: ScanConfig) -> Path:
         entry[2] += s.total_bytes
     with out.open("w", newline="", encoding="utf-8-sig") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["rule", "reason", "path", "files", "bytes", "GB"])
+        writer.writerow(["rule", "disposition", "reason", "path", "files", "bytes", "GB"])
         for s in subtrees:
-            writer.writerow([s.rule, s.reason, str(s.path), s.file_count, s.total_bytes, round(s.total_bytes / 1e9, 3)])
+            writer.writerow(
+                [s.rule, s.disposition, s.reason, str(s.path), s.file_count, s.total_bytes,
+                 round(s.total_bytes / 1e9, 3)]
+            )
     print(f"{'rule':<20} {'subtrees':>9} {'files':>10} {'GB':>9}")
     for rule, (count, files, size) in sorted(totals.items(), key=lambda kv: -kv[1][2]):
         print(f"{rule:<20} {count:>9,} {files:>10,} {size / 1e9:>9.1f}")

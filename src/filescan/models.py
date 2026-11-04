@@ -41,6 +41,9 @@ class ExclusionRule:
     name: str
     pattern: re.Pattern[str]
     reason: str = ""
+    # "delete-candidate": listed for review and possible deletion (old OS, caches).
+    # "keep-in-place": left where it is, never deleted (e.g. data hosted elsewhere).
+    disposition: str = "delete-candidate"
 
     def matches(self, folder: Path) -> bool:
         # A trailing separator lets patterns anchor on whole folder names.
