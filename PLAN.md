@@ -126,10 +126,14 @@ Files are scattered across the PC (C: user folders, D:, E:, F:), the LaCie J: an
 
 - [x] Write `server/fsagent.py` (`list`, `hash`, `copy`, `hashfile`), with tests that run on Windows.
   - `list` needs no installation: `ssh david@192.168.1.133 python3 - list <root> < server/fsagent.py` streams the script, and a trial on `diskd/music` worked.
-- [ ] **[USER]** Install xxhash on the server: `sudo apt install python3-xxhash`. Nothing else needs installing, because filescan streams `fsagent.py` over SSH. `hash` and `copy` keep resumable output in a work folder on the server, `~/fsagent-work/`, which Claude creates over SSH once you approve.
-- [ ] Check that the server's `xxh128` matches the PC's `hashing.full_hash` on the same file.
+- [x] **[USER]** Install xxhash on the server (version 3.0.0; `~/fsagent-work/` created): `sudo apt install python3-xxhash`. Nothing else needs installing, because filescan streams `fsagent.py` over SSH. `hash` and `copy` keep resumable output in a work folder on the server, `~/fsagent-work/`, which Claude creates over SSH once you approve.
+- [x] Check that the server's `xxh128` matches the PC's `hashing.full_hash` on the same file. Checked on a 24.9 MB file from `diskd/music`: the hashes match.
 - [ ] **[USER]** Create the SMB shares in the OMV web UI: `disk1` and `disk3` read-only, `disk2` read-write.
-- [ ] **[USER]** Review the draft config `C:\filescan\v2\config.yml`, which uses a **new** database in `C:\filescan\v2\`. The April config and database stay untouched for reference.
+  - The shares exist, but each points at a new empty subfolder (`<disk>/disk1/`) rather than the disk root. Each shared folder's relative path should be `/`.
+  - `smbd` is inactive: enable SMB in OMV (Services > SMB/CIFS).
+  - Remove the empty `disk1/`, `disk2/` and `disk3/` folders OMV created, once the shares point at the disk roots.
+  - The shares are needed only from Phase 5 onwards, for copying PC files to disk2.
+- [x] **[USER]** Review the draft config `C:\filescan\v2\config.yml`, which uses a **new** database in `C:\filescan\v2\`. The April config and database stay untouched for reference.
   - A new database is needed because the April one has active rows for the whole of `C:\` (Windows, Program Files, paths found by following junctions). The new roots would never mark those rows missing, so duplicate detection would hash them all.
   - Roots: PC `C:\Users\David` (AppData skipped), `D:\`, `E:\`, `F:\`, `J:\`; server sources disk1 and disk3; master disk2.
   - Evelyn, MT and Paratext_Projects are exclusions with `disposition: keep-in-place`. `.Trash-1000` is inventoried for review. `.git` is not excluded. The threshold is 1 byte.
