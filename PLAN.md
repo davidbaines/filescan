@@ -103,7 +103,8 @@ Files are scattered across the PC (C: user folders, D:, E:, F:), the LaCie J: an
 - [x] **LIKE wildcards.** Write one helper that escapes `_`, `%` and `\` and uses `ESCAPE`, and use it in `_path_prefix`, `clusters.py` and the waste detector.
 - [x] **Resolving every path.** Call `normalize_path` with `.resolve()` only for config roots. Paths read back from the database become plain `Path(...)`.
 - [x] **Scanner round trips.** Switch `_scan_folder` to `os.scandir`, which is a documented exception to the pathlib rule. Drop the full pre-walk in `_count_folders` for network roots. Junctions and symlinks are now skipped rather than followed and resolved.
-- [ ] **Hashing at scale.** Make `DuplicateDetector.run` group by size in SQL, streaming one size group at a time. Set the threshold to 1 byte in `C:\filescan\config.yml`.
+- [x] **Hashing at scale.** `DuplicateDetector.run` now groups by size in SQL (with a new `files(size)` index) and streams one size group at a time.
+  - [ ] Set the threshold to 1 byte in `C:\filescan\config.yml` once the Phase 2 roots are configured, so the first run hashes the new inventory rather than the stale April one.
 - [ ] **Root roles.**
   - Each root gets `location: pc | server` and `role: source | master | excluded`.
   - Anchored `exclude` patterns and a `pinned` list are added.
