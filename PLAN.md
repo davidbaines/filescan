@@ -128,7 +128,9 @@ Files are scattered across the PC (C: user folders, D:, E:, F:), the LaCie J: an
   - `list` needs no installation: `ssh david@192.168.1.133 python3 - list <root> < server/fsagent.py` streams the script, and a trial on `diskd/music` worked.
 - [x] **[USER]** Install xxhash on the server (version 3.0.0; `~/fsagent-work/` created): `sudo apt install python3-xxhash`. Nothing else needs installing, because filescan streams `fsagent.py` over SSH. `hash` and `copy` keep resumable output in a work folder on the server, `~/fsagent-work/`, which Claude creates over SSH once you approve.
 - [x] Check that the server's `xxh128` matches the PC's `hashing.full_hash` on the same file. Checked on a 24.9 MB file from `diskd/music`: the hashes match.
-- [ ] **[USER]** Create the SMB shares in the OMV web UI: `disk1` and `disk3` read-only, `disk2` read-write.
+- [x] **[USER]** Create the SMB shares in the OMV web UI. Done on 4 November: the shares expose the disk roots, `smbd` is enabled, the PC stores credentials with `cmdkey`, and a sample of 25 imported server paths matched over SMB on size and mtime.
+  - All three shares are read-write for david. The plan wanted disk1 and disk3 read-only as a safety net; filescan never writes to them.
+  - Windows' network provider order put WinFsp before the SMB client, and every UNC path hung. `LanmanWorkstation` now comes first.
   - The shares exist, but each points at a new empty subfolder (`<disk>/disk1/`) rather than the disk root. Each shared folder's relative path should be `/`.
   - `smbd` is inactive: enable SMB in OMV (Services > SMB/CIFS).
   - Remove the empty `disk1/`, `disk2/` and `disk3/` folders OMV created, once the shares point at the disk roots.
@@ -138,7 +140,7 @@ Files are scattered across the PC (C: user folders, D:, E:, F:), the LaCie J: an
   - Roots: PC `C:\Users\David` (AppData skipped), `D:\`, `E:\`, `F:\`, `J:\`; server sources disk1 and disk3; master disk2.
   - Evelyn, MT and Paratext_Projects are exclusions with `disposition: keep-in-place`. `.Trash-1000` is inventoried for review. `.git` is not excluded. The threshold is 1 byte.
 - [ ] `filescan scan --rescan` the PC roots.
-- [ ] `filescan import-server` (runs `fsagent list`). The command is written and tested; a trial import of `diskd/music` into a scratch database gave 1,039 files, 135 folders and 0 errors. The full run waits for the config step above.
+- [x] `filescan import-server` (runs `fsagent list`). Imported 1,301,682 files in 132,367 folders on 4 November, with no errors. One name Windows cannot represent, in the Trash, was skipped. The command is written and tested; a trial import of `diskd/music` into a scratch database gave 1,039 files, 135 folders and 0 errors. The full run waits for the config step above.
   - Server roots need `server_path` and may list `exclude_dirs` (for example `lost+found`); the SSH target is the top-level `server: {ssh: david@192.168.1.133}`.
   - A failed or empty listing raises an error before anything is marked missing.
   - Convert the server's `mtime_ns` to the stored float in one shared function. The stale-hash check compares mtimes exactly, so any drift would clear every server hash on each re-import.
