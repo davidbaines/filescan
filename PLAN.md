@@ -159,7 +159,7 @@ Files are scattered across the PC (C: user folders, D:, E:, F:), the LaCie J: an
   - Rule: never compute a hash for a server file, but do group server files that already have a full hash from `fsagent`.
   - `fsagent` supplies only full hashes, so a size group that includes server files skips the quick-hash prefilter for them.
 - [x] New command `filescan compare`. It writes `compare_missing_files.csv` (status, exclusion rule, size, path) and `compare_summary.csv` (totals per top folder, with excluded bytes split out) rather than XLSX, because the file list may run to millions of rows. Statuses are `no-size-match`, `content-differs`, `not-hashed` and `cloud-placeholder`.
-- [ ] Run `fsagent hash` on server-only size groups (`filescan hash-server`). Started 4 November at 10:36. disk1 is finished (16,589 files); disk3 has 69,565 files, 1.39 TB, hashing at about 70 MB/s.
+- [x] Run `fsagent hash` on server-only size groups (`filescan hash-server`). Done on 4 November, 10:36 to 14:44: 86,154 files, 1.61 TB, all stored, with no stale results or errors. disk3 averaged 110 MB/s.
 
 ### Phase 4: unwanted data, rules layer
 
