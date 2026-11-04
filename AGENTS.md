@@ -1,43 +1,119 @@
 # AGENTS.md
 
-## Project Intent
-This project organizes files and folders on Windows systems using a review-first workflow.
+Guidance for coding agents working in this repository. `CLAUDE.md` points here, and this file is the single source of project rules.
 
-Primary workflow:
-`scan -> duplicates -> similarity -> plan -> report -> execute (explicit only)`
+## Project intent
 
-## Product Rules
-- Windows only.
-- Use `pathlib.Path` instead of string paths where possible.
-- Use `pathlib.Path` instead of the os module where possible.
-- Suggestions must be user-reviewed before any file operations.
-- Do not auto-delete source data in the normal pipeline.
+`filescan` organises files on Windows with a review-first workflow:
+
+```
+scan -> duplicates -> similarity -> plan -> report -> execute (explicit only)
+```
+
+Nothing is deleted or moved without user approval. `execute` requires `--plan` and acts only on approved proposals.
+
+The current work extends filescan to compare the PC with a Linux home server and to build one organised set of files. That work happens on the `server_mirror` branch, and [PLAN.md](PLAN.md) describes it, with checklists recording progress. Read PLAN.md before starting work on that branch and tick items off as they are completed.
+
+## Commands
+
+```bash
+poetry install                                   # install dependencies
+
+filescan --config config.yml run                 # full non-destructive pipeline
+filescan --config config.yml scan
+filescan --config config.yml duplicates
+filescan --config config.yml similarity
+filescan --config config.yml plan
+filescan --config config.yml report
+filescan --config config.yml execute --plan /path/to/plan.json
+filescan --config config.yml waste
+filescan --config config.yml largest
+filescan --config config.yml merge-review
+
+poetry run pytest tests                          # run all tests
+poetry run pytest tests/unit/test_config.py      # one file
+poetry run pytest tests/unit/test_config.py::test_load_config_uses_paths_and_defaults
+
+flake8 src/
+isort src/ tests/
+black src/ tests/
+```
+
+The live configuration and database are in `C:\filescan` (`config.yml`, `file_index.db`).
+
+## Architecture
+
+**Entry point:** `src/filescan/cli.py` parses subcommands, runs the preflight database checks, then dispatches to the pipeline stages.
+
+| Stage | Module | Key class |
+|-------|--------|-----------|
+| Scan | `inventory/scanner.py` | `InventoryScanner`: multi-threaded recursive walk, writes `folders`/`files` |
+| Deduplicate | `dedupe/duplicates.py` | `DuplicateDetector`: size group, then quick hash, then full hash |
+| Similarity | `similarity/folders.py` | `FolderSimilarityAnalyser`: weighted heuristics (file signatures 35%, shared duplicates 55%, name 10%) |
+| Clusters | `similarity/clusters.py`, `similarity/merge_review.py` | Near-duplicate folder clusters and the Textual review TUI |
+| Plan | `planning/proposals.py` | `ProposalBuilder`: `mark_backup`, `merge_folder`, `needs_review` |
+| Report | `reporting/xlsx.py` | Custom XLSX writer (raw ZIP and XML, no external library) |
+| Execute | `execution/mover.py` | `ExecutionRunner`: copies trees, verifies by hash before writing |
+| Waste | `cleanup/waste_detector.py` | Pattern-based detection of junk and cache folders |
+
+**Data layer:** `storage/db.py` (`SQLiteDB`, WAL mode) and `storage/repositories.py` (`FileRepository`). The database is the single source of truth for restartability: stages check what has already been processed and skip it unless `--rescan` is given.
+
+**Models:** `models.py` defines the data classes (`FileRecord`, `FolderRecord`, `DuplicateGroup`, `FolderSimilarityCandidate`, `PlanProposal`, `ExecutionResult`, `ScanConfig`).
+
+**Hashing:** `dedupe/hashing.py`. The quick hash reads a 4 KB head, a 4 KB tail and the size. The full hash streams the whole file in 1 MB chunks with xxhash128.
+
+**Server helper (planned):** `server/fsagent.py` runs on the Debian server. It lists, hashes and copies files locally, and filescan drives it over SSH.
+
+## Product rules
+
+- filescan runs on Windows only. The server helper `server/fsagent.py` targets Debian and uses only the Python standard library and `xxhash`.
+- Configure server roots as UNC paths (`\\192.168.1.133\disk3`), never as mapped drive letters: an elevated shell cannot see drives mapped in a normal session.
+- Keep the SQLite database on a local disk, never on a network share.
+- Suggestions must be reviewed by the user before any file operation.
+- Never delete source data in the normal pipeline. Deletion is always a separate, explicit command that acts on a reviewed plan.
 - Treat exact duplicate files and similar folders as separate concerns.
 
-## Analysis Rules
-- Exact duplicate file detection should be independent from folder similarity detection.
-- Folder similarity should use multiple heuristics, not Jaccard alone.
-- Backup-like folder names include: `backup`, `copy`, `old`, `temp`, `temporary`.
-- Categorization suggestions may use metadata/content analysis, but final decisions are user-curated.
+## Analysis rules
 
-## UX Rules
-- Always show the currently active process during long-running work.
-- Any long-running iterative process should use a visible `tqdm` progress bar.
-- Progress bars should remain visible after completion.
-- The default CLI command should run the normal non-destructive pipeline.
-- The default pipeline should produce a final summary and a report in the configured filescan folder.
+- Exact duplicate detection is independent of folder similarity detection.
+- Folder similarity uses several heuristics, not Jaccard alone.
+- Backup-like folder names include `backup`, `copy`, `old`, `temp` and `temporary`.
+- Categorisation suggestions may use metadata or content analysis, but the user makes the final decisions.
+- Two files count as the same only when their content hashes match. Name, size or relative path alone can suggest a match for review, never prove one.
 
-## Config Rules
-- Use a shared `filescan_folder` for related outputs.
-- Read database and report locations from:
-  - `database_folder`
-  - `database_filename`
-  - `report_filename`
+## UX rules
 
-## Engineering Rules
-- Follow TDD with `pytest`.
-- Keep startup checks fast and fail early if the configured database is not writable.
-- Make the code restartable, so that if it crashes most of the work is saved in the database.
-- Don't rescan or re-analyse previously scanned folders unless a --rescan option is given.
-- Preserve safety and observability over raw speed.
-- Catch PermissionErrors and other disk operation errors, ignore those files and continue.
+- Always show the active process during long-running work.
+- Every long-running loop uses a visible `tqdm` progress bar with `leave=True`.
+- The default CLI command runs the normal non-destructive pipeline.
+- The default pipeline ends with a summary and a report in the configured filescan folder.
+
+## Config rules
+
+- Related outputs share one `filescan_folder`.
+- Database and report locations come from `database_folder`, `database_filename` and `report_filename`.
+
+## Engineering rules
+
+- Use `pathlib.Path` rather than string paths or the `os` module where possible. Exception: the scanner may use `os.scandir`, because on Windows its `DirEntry` carries size and mtime from the directory listing and saves a round trip per file.
+- Follow TDD with `pytest`. Unit tests live in `tests/unit/` (fast, isolated); integration tests live in `tests/integration/` (full pipeline on temporary file trees).
+- Include a test that builds synthetic data with duplicate files and folders, and checks that the Excel report has a row for each duplicate. Keep that data and its report in `tests/manual/report_fixture/` for manual inspection.
+- Keep startup checks fast, and fail early if the configured database is not writable.
+- Make the code restartable: a crash should lose at most the current batch.
+- Don't rescan or re-analyse folders already processed unless `--rescan` is given.
+- Put safety and observability ahead of raw speed.
+- Catch `PermissionError` and other `OSError`s on individual files, log them and continue.
+- When building SQL `LIKE` patterns from paths, escape `_`, `%` and `\`.
+
+## Test structure
+
+- `tests/unit/`: isolated unit tests, no disk I/O beyond temporary fixtures.
+- `tests/integration/`: full CLI pipeline tests using `tree_builder.build_tree()` to create synthetic file trees.
+- `tests/manual/report_fixture/`: a persistent dataset for manual XLSX inspection. Running the integration tests regenerates its report; don't commit that change unless the report format changed deliberately.
+- `conftest.py` provides the `tmp_path` (Windows temp folder), `write_config` and `make_repo` fixtures.
+- The `test_*.py` files in the repository root belong to an older prototype and are not part of the suite; run `pytest tests`.
+
+## Working style
+
+- Don't show code diffs in the terminal.
+- Write British English in documentation, comments and commit messages.
