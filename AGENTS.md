@@ -32,6 +32,10 @@ filescan --config config.yml merge-review
 filescan --config config.yml import-server       # list server roots with fsagent over SSH
 filescan --config config.yml exclusions-report   # CSV of what each exclusion rule leaves out
 filescan --config config.yml compare             # PC files with no identical copy on the server
+filescan --config config.yml hash-server         # hash server files that share a size, on the server
+filescan --config config.yml unwanted-report     # unwanted-data rules, reported by folder
+filescan --config config.yml review server-trash # keep or trash, folder by folder, for one exclusion
+filescan --config config.yml measure             # distinct size of the organised set against disk space
 
 poetry run pytest tests                          # run all tests
 poetry run pytest tests/unit/test_config.py      # one file

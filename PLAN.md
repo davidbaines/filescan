@@ -49,7 +49,7 @@ Files are scattered across the PC (C: user folders, D:, E:, F:), the LaCie J: an
   - PC with no copy on the server: 0.91 TB.
   - J: with no copy anywhere else: 37 GB.
   - disk1 with no copy on disk3: 272 GB.
-  - `disk3/.Trash-1000` holds 312 GB, of which 194 GB is unique, mostly `E6510-first-disk`.
+  - `disk3/.Trash-1000` holds 312 GB, of which 194 GB is unique, mostly `E6510-first-disk`. (By hash on 4 November: 387 GB, of which 234 GB has no copy outside the Trash and the delete-candidate areas.)
 - **Hashing volumes:**
   - Only about 250 GB of server files share a size with a PC or J: file.
   - About 1.8 TB of server files share a size with another server file.
@@ -163,16 +163,23 @@ Files are scattered across the PC (C: user folders, D:, E:, F:), the LaCie J: an
 
 ### Phase 4: unwanted data, rules layer
 
-- [ ] Move the waste-detector patterns into a YAML rules file. Each rule gives a pattern, a category, a disposition and a reason.
-- [ ] Add rules for installers and ISOs, VM images, build and package output, caches, Takeout sidecars, WhatsApp media and screenshots.
-- [ ] Roll the results up the folder tree. Write a review report sorted by bytes reclaimable, and store review decisions in the database.
-- [ ] **[USER]** Review the Trash: the 194 GB found nowhere else.
-- [ ] **[USER]** Review the deletion candidates among the excluded data on the PC.
-- [ ] **[GATE]** Checkpoint: measure the unique set against disk2 (overflowing to disk1) and against the PC's F:, E: and D:. Then decide whether an AI layer is needed.
+- [x] Put the unwanted-data rules in a YAML file, `src/filescan/cleanup/unwanted_rules.yml`. Each rule gives a pattern, a category, a disposition and a reason. The older `waste` command keeps its own patterns, because it serves a different purpose (`.url` shortcuts to cache folders).
+- [x] Add rules for installers and ISOs, VM images, build and package output, caches, Takeout sidecars, WhatsApp media and screenshots, plus a version rule for Windows File History copies.
+  - `filescan unwanted-report` writes `unwanted_report.csv` (by folder) and `unwanted_files.csv` (every file), and stores the matches in `unwanted_matches`.
+  - First run, 4 November: older File History versions 1,565 GB (all on `disk3\david\David\WORK`, where the newest versions need 82.5 GB); disk images 56 GB; VM disks 54 GB; installers 32 GB; build output 23 GB; caches 10 GB; the rest is small.
+- [x] Roll the results up the folder tree, and store review decisions in the database. `filescan review <scope>` reviews one delete-candidate exclusion folder by folder; decisions go to `review_decisions` and `review_<scope>.csv`.
+  - A file counts as unique unless a copy survives outside every delete-candidate area.
+  - Tools considered: the existing Textual screen (chosen: one key or click per folder, runs in the VS Code terminal, stores each decision immediately); links in a Markdown or CSV file (two actions per decision, and folder links behave unpredictably); WizTree, TreeSize, dupeGuru and Czkawka (good for browsing, but none records a keep or trash decision per folder against our hashes).
+- [x] `server-trash` added to the exclusions in `C:\filescan\v2\config.yml` (first in the list, so the whole Trash is one review scope). The previous config is `config.yml.bak-20261104`.
+- [ ] **[USER]** Review the Trash: `filescan --config C:\filescan\v2\config.yml review server-trash`. 234 GB is unique, in 595 folders; 73 folders (64 GB) carry a "trash" suggestion from the old-OS and cache rules.
+- [ ] **[USER]** Review the deletion candidates among the excluded data on the PC: the same command with `acronis`, `public-corpora`, `old-os-root`, `old-os-in-backups` or `app-caches`.
+- [ ] **[USER]** Review the unwanted-data report, starting with the File History versions. Decide whether older versions can go (the plan chose a mirror with no versions).
+- [ ] **[GATE]** Checkpoint: measure the unique set against disk2 (overflowing to disk1) and against the PC's F:, E: and D:. Then decide whether an AI layer is needed. `filescan measure` does the measuring; see the figures below.
 
 ### Phase 5: build the server master on disk2
 
 - [ ] **[USER]** Write `layout.yml`, mapping each source top folder to a category. Anything unmapped goes to `Unsorted/<origin>`.
+  - A draft is in `C:\filescan\v2\layout.yml`: 70 mappings and a stay-in-place list. Entries marked `# ?` need a decision.
 - [ ] New command `filescan build-plan`.
   - It produces one layout manifest, `hash → destination`, shared by the master and the PC.
   - Near-duplicate trees are merged with the existing cluster logic; pinned folders and Git repositories are copied whole.
