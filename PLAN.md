@@ -124,7 +124,8 @@ Files are scattered across the PC (C: user folders, D:, E:, F:), the LaCie J: an
 
 ### Phase 2: server setup and a fresh inventory
 
-- [ ] Write `server/fsagent.py` (`list`, `hash`, `copy`), with tests that run on Windows.
+- [x] Write `server/fsagent.py` (`list`, `hash`, `copy`, `hashfile`), with tests that run on Windows.
+  - `list` needs no installation: `ssh david@192.168.1.133 python3 - list <root> < server/fsagent.py` streams the script, and a trial on `diskd/music` worked.
 - [ ] **[USER]** Install the helper: `sudo apt install python3-xxhash`, then copy `fsagent.py` to `~/fsagent/`.
 - [ ] Check that the server's `xxh128` matches the PC's `hashing.full_hash` on the same file.
 - [ ] **[USER]** Create the SMB shares in the OMV web UI: `disk1` and `disk3` read-only, `disk2` read-write.
