@@ -245,10 +245,23 @@ class FileRepository:
         for row in rows:
             yield self._folder_from_row(row)
 
-    def duplicate_size_groups(self, *, min_size: int = 1) -> list[tuple[int, int]]:
-        """Return (size, file_count) for every size shared by two or more active files."""
+    @staticmethod
+    def _outside_roots_clause(roots: list[Path]) -> tuple[str, list[str]]:
+        clause = ""
+        params: list[str] = []
+        for root in roots:
+            clause += " AND NOT (files.path = ? OR files.path LIKE ? ESCAPE '|')"
+            params.extend(path_prefix(root))
+        return clause, params
+
+    def duplicate_size_groups(self, *, min_size: int = 1, exclude_roots: list[Path] = ()) -> list[tuple[int, int]]:
+        """Return (size, file_count) for every size shared by two or more active files.
+
+        Cloud placeholders and files under `exclude_roots` are left out.
+        """
+        outside, params = self._outside_roots_clause(list(exclude_roots))
         rows = self.db.conn.execute(
-            """
+            f"""
             SELECT files.size AS size, COUNT(*) AS file_count
             FROM files
             JOIN folders ON folders.id = files.folder_id
@@ -256,17 +269,19 @@ class FileRepository:
               AND folders.is_missing = 0
               AND files.size >= ?
               AND (files.attributes & ?) = 0
+              {outside}
             GROUP BY files.size
             HAVING COUNT(*) > 1
             ORDER BY files.size
             """,
-            (min_size, CLOUD_PLACEHOLDER_MASK),
+            (min_size, CLOUD_PLACEHOLDER_MASK, *params),
         )
         return [(int(row["size"]), int(row["file_count"])) for row in rows]
 
-    def files_of_size(self, size: int) -> list[FileRecord]:
+    def files_of_size(self, size: int, *, exclude_roots: list[Path] = ()) -> list[FileRecord]:
+        outside, params = self._outside_roots_clause(list(exclude_roots))
         rows = self.db.conn.execute(
-            """
+            f"""
             SELECT files.id, files.folder_id, folders.path AS folder_path, files.filename, files.path, files.size,
                    files.mtime, files.ctime, files.scan_run_id, files.is_missing, files.attributes,
                    file_hashes.quick_hash, file_hashes.full_hash
@@ -277,9 +292,10 @@ class FileRepository:
               AND files.is_missing = 0
               AND folders.is_missing = 0
               AND (files.attributes & ?) = 0
+              {outside}
             ORDER BY files.path
             """,
-            (size, CLOUD_PLACEHOLDER_MASK),
+            (size, CLOUD_PLACEHOLDER_MASK, *params),
         )
         return [self._file_from_row(row) for row in rows]
 

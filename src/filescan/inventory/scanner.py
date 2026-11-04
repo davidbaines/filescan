@@ -48,6 +48,7 @@ class InventoryScanner:
         self.rescan = rescan
         self.delta = delta and not rescan  # rescan overrides delta
         self._logged_skips: set[tuple[str, Path, str]] = set()
+        self._skip_paths = config.skip_paths
 
     def _log_skip(self, *, kind: str, path: Path, exc: OSError) -> None:
         if getattr(exc, "winerror", None) in _SILENT_WINERRORS:
@@ -66,7 +67,10 @@ class InventoryScanner:
             return None
 
     def _excluded_folder(self, path: Path) -> bool:
-        return path.name in self.config.exclude_folders
+        return path.name in self.config.exclude_folders or path in self._skip_paths
+
+    def _keep_dir(self, entry: os.DirEntry) -> bool:
+        return entry.name not in self.config.exclude_folders and Path(entry.path) not in self._skip_paths
 
     def _accepted_file_stat(self, entry: os.DirEntry) -> os.stat_result | None:
         """Return the entry's stat if the file passes the size and extension filters.
@@ -116,7 +120,7 @@ class InventoryScanner:
                     listing = self._list_folder(folder)
                     if listing is None:
                         return ScanResult(folder=None, files=[], subdirs=[], raw_dirs=0, raw_files=0)
-                    subdirs = [Path(e.path) for e in listing[0] if e.name not in self.config.exclude_folders]
+                    subdirs = [Path(e.path) for e in listing[0] if self._keep_dir(e)]
                     return ScanResult(folder=None, files=[], subdirs=subdirs, raw_dirs=0, raw_files=0, skipped=True)
             except OSError:
                 pass  # can't stat — fall through to full scan
@@ -126,7 +130,7 @@ class InventoryScanner:
             return ScanResult(folder=None, files=[], subdirs=[], raw_dirs=0, raw_files=0)
         all_dirs, all_files = listing
 
-        subdirs = [Path(entry.path) for entry in all_dirs if entry.name not in self.config.exclude_folders]
+        subdirs = [Path(entry.path) for entry in all_dirs if self._keep_dir(entry)]
         files: list[FileRecord] = []
         total_bytes = 0
         for entry in all_files:
@@ -176,7 +180,7 @@ class InventoryScanner:
         while stack:
             listing = self._list_folder_quiet(stack.pop())
             for entry in listing:
-                if entry.name not in self.config.exclude_folders:
+                if self._keep_dir(entry):
                     stack.append(Path(entry.path))
                     count += 1
         return count
@@ -219,7 +223,8 @@ class InventoryScanner:
             self._load_folder_scan_times(db) if self.delta else {}
         )
 
-        for root in self.config.roots:
+        # Server roots are listed by the server helper, never walked over SMB.
+        for root in self.config.pc_roots:
             if not root.is_dir():
                 continue
             existing_stats = repo.get_scan_stats(root)

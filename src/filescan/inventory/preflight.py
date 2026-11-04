@@ -39,7 +39,7 @@ def check_db_space(config: ScanConfig) -> None:
 
 def _estimate(config: ScanConfig) -> tuple[int, int]:
     total_files = 0
-    for root in config.roots:
+    for root in config.pc_roots:  # server roots are imported from fsagent, not scanned
         try:
             used = shutil.disk_usage(root).used
             total_files += used // _AVG_FILE_SIZE_BYTES

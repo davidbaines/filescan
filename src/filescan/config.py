@@ -8,7 +8,7 @@ from typing import Any
 import yaml
 
 from filescan.inventory.normalizer import normalize_path
-from filescan.models import ScanConfig
+from filescan.models import ExclusionRule, RootConfig, ScanConfig
 
 _SIZE_PATTERN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(B|KB|MB|GB)?\s*$", re.IGNORECASE)
 _SIZE_MULTIPLIERS = {"b": 1, "kb": 1024, "mb": 1024 ** 2, "gb": 1024 ** 3}
@@ -51,6 +51,44 @@ def _require_mapping(value: Any, *, message: str) -> dict[str, Any]:
     return value
 
 
+_LOCATIONS = ("pc", "server")
+_ROLES = ("source", "master")
+
+
+def _parse_root(item: dict[str, Any]) -> RootConfig:
+    root_path = normalize_path(item["path"])
+    location = str(item.get("location", "pc"))
+    if location not in _LOCATIONS:
+        raise ValueError(f"Root {root_path}: location must be one of {_LOCATIONS}, got {location!r}.")
+    role = str(item.get("role", "source"))
+    if role not in _ROLES:
+        raise ValueError(f"Root {root_path}: role must be one of {_ROLES}, got {role!r}.")
+    skip_raw = item.get("skip") or []
+    if not isinstance(skip_raw, list):
+        raise ValueError(f"Root {root_path}: 'skip' must be a list of folders relative to the root.")
+    skip = tuple(root_path / str(entry) for entry in skip_raw)
+    return RootConfig(path=root_path, location=location, role=role, skip=skip)  # type: ignore[arg-type]
+
+
+def _parse_exclusions(raw: Any) -> tuple[ExclusionRule, ...]:
+    if not raw:
+        return ()
+    if not isinstance(raw, list):
+        raise ValueError("'exclusions' must be a list of {name, pattern, reason} mappings.")
+    rules: list[ExclusionRule] = []
+    for item in raw:
+        item = _require_mapping(item, message="Each exclusion must be a mapping with 'name' and 'pattern'.")
+        name, pattern = item.get("name"), item.get("pattern")
+        if not name or not pattern:
+            raise ValueError(f"Each exclusion needs 'name' and 'pattern', got: {item!r}")
+        try:
+            compiled = re.compile(str(pattern), re.IGNORECASE)
+        except re.error as exc:
+            raise ValueError(f"Invalid exclusion pattern for {name!r}: {exc}") from exc
+        rules.append(ExclusionRule(name=str(name), pattern=compiled, reason=str(item.get("reason", ""))))
+    return tuple(rules)
+
+
 def load_config(config_path: str | Path) -> ScanConfig:
     path = Path(config_path)
     payload = yaml.safe_load(path.read_text()) or {}
@@ -59,6 +97,7 @@ def load_config(config_path: str | Path) -> ScanConfig:
     roots_raw = data.get("roots")
     folders_raw = data.get("folders")
 
+    root_configs: list[RootConfig] = []
     if roots_raw:
         roots: list[Path] = []
         large_file_thresholds: dict[Path, int] = {}
@@ -70,13 +109,16 @@ def load_config(config_path: str | Path) -> ScanConfig:
             path_raw = item.get("path")
             if not path_raw:
                 raise ValueError("Each root entry must have a 'path' key.")
-            root_path = normalize_path(path_raw)
+            root_config = _parse_root(item)
+            root_configs.append(root_config)
+            root_path = root_config.path
             roots.append(root_path)
             size_raw = item.get("large_file_size")
             if size_raw is not None:
                 large_file_thresholds[root_path] = _parse_size(size_raw)
     elif folders_raw:
         roots = [normalize_path(item) for item in folders_raw]
+        root_configs = [RootConfig(path=root) for root in roots]
         large_file_thresholds = {}
     else:
         raise ValueError("Config must define at least one scan root in 'roots'.")
@@ -142,4 +184,7 @@ def load_config(config_path: str | Path) -> ScanConfig:
         large_file_thresholds=large_file_thresholds,
         scan_max_age=scan_max_age,
         waste_file_size=waste_file_size,
+        root_configs=root_configs,
+        exclusions=_parse_exclusions(data.get("exclusions")),
+        pinned=tuple(normalize_path(item) for item in (data.get("pinned") or [])),
     )

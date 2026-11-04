@@ -105,20 +105,14 @@ Files are scattered across the PC (C: user folders, D:, E:, F:), the LaCie J: an
 - [x] **Scanner round trips.** Switch `_scan_folder` to `os.scandir`, which is a documented exception to the pathlib rule. Drop the full pre-walk in `_count_folders` for network roots. Junctions and symlinks are now skipped rather than followed and resolved.
 - [x] **Hashing at scale.** `DuplicateDetector.run` now groups by size in SQL (with a new `files(size)` index) and streams one size group at a time.
   - [ ] Set the threshold to 1 byte in `C:\filescan\config.yml` once the Phase 2 roots are configured, so the first run hashes the new inventory rather than the stale April one.
-- [ ] **Root roles.**
-  - Each root gets `location: pc | server` and `role: source | master | excluded`.
-  - Anchored `exclude` patterns and a `pinned` list are added.
-  - New command `exclusions-report` shows the bytes each pattern catches.
-  - [ ] **Tag excluded data; don't skip it at scan time.**
-    - Inventory everything under a root and store the matching exclusion rule on the folder. Apply exclusions when querying and planning, so `exclusions-report` is a query.
-    - Keep skipping at scan time only for data that never leaves the PC, such as AppData.
-    - Otherwise excluded data never enters the database: `verify-coverage` would pass, and wiping disk3 and disk1 would destroy it unreviewed.
-    - The gate before any wipe reports the excluded bytes on that disk and needs an explicit sign-off.
-  - [ ] **Remove `.git` from `exclude_folders`,** in the code default, in the test fixture and in `C:\filescan\config.yml`. Repositories that exist only on the server must keep their history.
-  - [ ] **A root's location decides which stage handles it.**
-    - The scanner never walks `location: server` roots; `import-server` lists them instead.
-    - The duplicate detector never hashes server files; `fsagent hash` does.
-    - Marking missing files for server roots happens during the import.
+- [x] **Root roles.** Each root takes `location: pc | server` (default `pc`), `role: source | master` (default `source`) and an optional `skip` list of folders relative to the root. The config also takes top-level `exclusions` (a list of `name`, `pattern`, `reason`) and `pinned` (a list of paths).
+  - [x] **Exclusions are tagged, not skipped.** Rules are evaluated when queried, not stored on folders, so editing a rule never leaves stale tags. `filescan exclusions-report` writes `exclusions_report.csv`, listing each excluded subtree once with its recursive totals, and prints totals per rule.
+    - Root `skip` folders, such as AppData, are the only data never inventoried.
+    - Still to do in Phase 5 and 7: the gate before any wipe reports the excluded bytes on that disk and needs an explicit sign-off.
+  - [x] **`.git` removed from `exclude_folders`** in the test fixture; the code default was already empty.
+    - [ ] Remove it from `C:\filescan\config.yml` while setting up the Phase 2 roots.
+  - [x] **A root's location decides which stage handles it.** The scanner walks only PC roots, the duplicate detector never hashes files under server roots, and the space preflight counts only PC roots. `normalize_path` no longer resolves UNC paths, which would mean a network round trip.
+    - [ ] Marking missing files for server roots happens in `import-server` (Phase 2).
 - [x] **Cloud placeholders.** The scanner stores `attributes`, and the duplicate detector skips placeholders. Listing them in the Phase 3 and exclusion reports is still to do.
   - iCloudDrive has 23 placeholder files and OneDrive 16 (`RECALL_ON_DATA_ACCESS`), and reading one downloads it.
   - Store `st_file_attributes` in the scanner, which costs nothing on Windows, and never hash files flagged `RECALL_ON_DATA_ACCESS` (0x400000), `RECALL_ON_OPEN` (0x40000) or `OFFLINE` (0x1000).
@@ -126,7 +120,7 @@ Files are scattered across the PC (C: user folders, D:, E:, F:), the LaCie J: an
 - [x] **Batch the hash commits.** Done: hashes are committed every 500 rows or 5 seconds, and one thread pool serves the whole run. Original note: `upsert_file_hash` commits after every file. Commit every few hundred files or every few seconds instead, so a crash still loses at most the current batch.
 - [x] Python is pinned to 3.12 or later in `pyproject.toml`, so `DirEntry.is_junction()` is available.
 - [x] **The fixture test fails on `main` too.** Fixed. Commit b168e56 deliberately turned `merge_folder` proposals into clusters, but the XLSX Plans sheet never listed clusters. The report now has `merge_cluster` rows, and the test approves clusters and runs on a copy of the fixture input; executing had been writing `.filescan-merged` markers into the tracked tree. Original note: `test_report_fixture_contents.py` expects a `merge_folder` row. Find out with `git bisect` in a separate worktree whether the cluster work changed this deliberately (update the test) or broke it (fix the code). Make the test write its report to a temporary copy, so it stops dirtying the tracked fixture.
-- [ ] **[GATE]** `pytest` passes.
+- [x] **[GATE]** `pytest` passes: 113 tests, as of the root-roles commit.
 
 ### Phase 2: server setup and a fresh inventory
 

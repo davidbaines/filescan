@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
@@ -7,6 +8,41 @@ from typing import Literal
 
 PlanAction = Literal["keep", "mark_backup", "merge_folder", "move_folder", "needs_review"]
 ApprovalState = Literal["pending", "approved", "rejected"]
+RootLocation = Literal["pc", "server"]
+RootRole = Literal["source", "master"]
+
+
+@dataclass(frozen=True, slots=True)
+class RootConfig:
+    """One configured root.
+
+    location: "pc" roots are walked by the scanner; "server" roots are listed by
+    the server helper and never walked or hashed over the network.
+    role: "source" roots feed the organised set; "master" is where it is built.
+    skip: absolute folders never inventoried (data that never leaves the PC).
+    """
+
+    path: Path
+    location: RootLocation = "pc"
+    role: RootRole = "source"
+    skip: tuple[Path, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ExclusionRule:
+    """A named pattern for data left out of the organised set.
+
+    Excluded data is still inventoried; rules are applied when querying, so the
+    excluded bytes stay visible for review before anything is wiped.
+    """
+
+    name: str
+    pattern: re.Pattern[str]
+    reason: str = ""
+
+    def matches(self, folder: Path) -> bool:
+        # A trailing separator lets patterns anchor on whole folder names.
+        return self.pattern.search(str(folder).rstrip("\\") + "\\") is not None
 
 
 @dataclass(slots=True)
@@ -30,9 +66,27 @@ class ScanConfig:
     waste_file_size: int = 0
 
     similarity_cluster_threshold: float = 0.70
+    root_configs: list[RootConfig] = field(default_factory=list)
+    exclusions: tuple[ExclusionRule, ...] = ()
+    pinned: tuple[Path, ...] = ()
 
     def large_file_size_for(self, root: Path) -> int:
         return self.large_file_thresholds.get(root, self.large_file_size)
+
+    def _configs(self) -> list[RootConfig]:
+        return self.root_configs or [RootConfig(path=root) for root in self.roots]
+
+    @property
+    def pc_roots(self) -> list[Path]:
+        return [rc.path for rc in self._configs() if rc.location == "pc"]
+
+    @property
+    def server_roots(self) -> list[Path]:
+        return [rc.path for rc in self._configs() if rc.location == "server"]
+
+    @property
+    def skip_paths(self) -> frozenset[Path]:
+        return frozenset(path for rc in self._configs() for path in rc.skip)
 
     @property
     def artifact_dir(self) -> Path:

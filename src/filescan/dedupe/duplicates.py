@@ -77,7 +77,11 @@ class DuplicateDetector:
             return groups
         # Group by size in SQL and stream one size group at a time, so memory stays
         # flat however many files are indexed.
-        size_groups = repo.duplicate_size_groups(min_size=self.config.duplicate_size_threshold)
+        # Server files are hashed on the server by fsagent, never over SMB.
+        server_roots = self.config.server_roots
+        size_groups = repo.duplicate_size_groups(
+            min_size=self.config.duplicate_size_threshold, exclude_roots=server_roots
+        )
         total_candidate_files = sum(count for _, count in size_groups)
         print(f"  {len(size_groups):,} shared sizes covering {total_candidate_files:,} files")
 
@@ -89,7 +93,7 @@ class DuplicateDetector:
             ThreadPoolExecutor(max_workers=self.config.worker_count) as pool,
         ):
             for size, count in size_groups:
-                group = repo.files_of_size(size)
+                group = repo.files_of_size(size, exclude_roots=server_roots)
                 self._populate_hashes(repo, group, full=False, bar=quick_bar, pool=pool)
                 by_quick: dict[str, list[FileRecord]] = defaultdict(list)
                 for file_record in group:

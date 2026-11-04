@@ -40,7 +40,7 @@ def write_config(tmp_path: Path):
             "database_folder": str(filescan_folder),
             "database_filename": "file_index.db",
             "report_filename": "filescan_report.xlsx",
-            "exclude_folders": [".git", "__pycache__"],
+            "exclude_folders": ["__pycache__"],
             "exclude_extensions": [".tmp", ".log"],
             "min_file_size": 0,
             "max_file_size": None,

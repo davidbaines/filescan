@@ -11,6 +11,7 @@ from filescan.inventory.preflight import check_db_space, check_stale_roots
 from filescan.inventory.scanner import run_scan
 from filescan.planning.artifacts import load_plan_artifact
 from filescan.planning.proposals import build_plan_artifact
+from filescan.reporting.exclusions import run_exclusions_report
 from filescan.reporting.largest_files import _fmt_size, find_large_files, run_largest
 from filescan.reporting.xlsx import write_report
 from filescan.similarity.clusters import dump_clusters_json, find_clusters
@@ -52,6 +53,10 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("report")
     subparsers.add_parser("waste")
     subparsers.add_parser("largest")
+    subparsers.add_parser(
+        "exclusions-report",
+        help="List the folders each exclusion rule leaves out of the organised set, with sizes (CSV).",
+    )
     clusters_parser = subparsers.add_parser("clusters", help="Debug: dump folder clusters as JSON.")
     clusters_parser.add_argument("--show-suppressed", action="store_true", help="Include hierarchy-suppressed clusters.")
 
@@ -190,6 +195,9 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "largest":
         _stage_start("largest")
         run_largest(args.config)
+    elif args.command == "exclusions-report":
+        _stage_start("exclusions-report")
+        print(run_exclusions_report(args.config))
     elif args.command == "clusters":
         clusters = find_clusters(args.config)
         if not getattr(args, "show_suppressed", False):
