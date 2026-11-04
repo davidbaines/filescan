@@ -89,7 +89,7 @@ class Unit:
         return counts.most_common(n)
 
 
-def short_path(path: str, width: int = 64) -> str:
+def short_path(path: str, width: int = 50) -> str:
     """The drive (C:) or server disk (disk3) and as much of the end of the path as fits.
 
     The detail pane always shows the full path.
