@@ -62,7 +62,6 @@ class Unit:
     suggestion: Suggestion | None = None
     decision: str | None = None
     unique_bytes: int = 0
-    display_base: str = ""
     _unique_content: dict[str, int] = field(default_factory=dict)
 
     @property
@@ -75,13 +74,7 @@ class Unit:
 
     @property
     def label_path(self) -> str:
-        base = self.display_base or self.root
-        rel = self.path[len(base):].lstrip(SEP)
-        parts = rel.split(SEP) if rel else []
-        if len(parts) > 4:
-            parts = [parts[0], "\u2026", *parts[-3:]]  # elide the middle; the detail pane shows the full path
-        shown = SEP.join(parts) or (PureWindowsPath(base).name or base)
-        return shown + (f"{SEP}(files here)" if self.kind == FILES else "")
+        return short_path(self.path) + (f"{SEP}(files here)" if self.kind == FILES else "")
 
     def unique_files(self) -> list[ReviewFile]:
         return [f for f in self.files if f.unique]
@@ -94,6 +87,26 @@ class Unit:
         for f in self.unique_files():
             counts[PureWindowsPath(f.path).suffix.lower() or "(none)"] += f.size
         return counts.most_common(n)
+
+
+def short_path(path: str, width: int = 64) -> str:
+    """The drive (C:) or server disk (disk3) and as much of the end of the path as fits.
+
+    The detail pane always shows the full path.
+    """
+    if path.startswith(SEP * 2):
+        parts = path[2:].split(SEP)
+        head, rest = parts[1] if len(parts) > 1 else parts[0], parts[2:]
+    else:
+        parts = path.split(SEP)
+        head, rest = parts[0], parts[1:]
+    tail: list[str] = []
+    for part in reversed(rest):
+        if tail and len(SEP.join([part, *tail])) > width:
+            break
+        tail.insert(0, part)
+    elided = len(tail) < len(rest)
+    return head + SEP + ("\u2026" + SEP if elided else "") + SEP.join(tail)
 
 
 # ---------------------------------------------------------------- loading
@@ -308,28 +321,6 @@ def distinct_unique_bytes(units: Iterable[Unit], decision: str | None = "any") -
             if f.unique:
                 content[f.content_key] = f.size
     return sum(content.values())
-
-
-def set_display_base(units: list[Unit]) -> None:
-    """Label units relative to the deepest folder that contains all of them (per root)."""
-    by_root: dict[str, list[Unit]] = {}
-    for unit in units:
-        by_root.setdefault(unit.root, []).append(unit)
-    for root, group in by_root.items():
-        parts = [u.path.split(SEP) for u in group]
-        common = parts[0]
-        for p in parts[1:]:
-            n = 0
-            while n < min(len(common), len(p)) and common[n].lower() == p[n].lower():
-                n += 1
-            common = common[:n]
-        base = SEP.join(common)
-        if len(group) > 1 and base.lower() in {u.path.lower() for u in group}:
-            base = _parent(base)  # keep the shared folder visible when it is itself a unit
-        if not base.lower().startswith(root.lower()):
-            base = root
-        for unit in group:
-            unit.display_base = base
 
 
 def ancestors(path: str, root: str) -> list[str]:

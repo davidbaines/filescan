@@ -27,7 +27,6 @@ from filescan.review.model import (
     mark_unique,
     recompute_unique,
     scope_roots,
-    set_display_base,
 )
 from filescan.storage import SQLiteDB
 
@@ -93,7 +92,6 @@ class ReviewSession:
             if unit.suggestion is None and unit.unique_bytes == 0:
                 unit.suggestion = Suggestion(TRASH, "every file has a copy in a kept location")
         recompute_unique(units)
-        set_display_base(units)
         units.sort(key=lambda u: (-u.unique_bytes, u.path.lower()))
         self.units = units
 

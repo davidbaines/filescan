@@ -251,3 +251,13 @@ def test_measure_counts_distinct_content_and_unwanted_levels(tmp_path):
     assert result.distinct[REVIEW] == [40, 20, 100]
     assert result.distinct[NORMAL] == [10, 20, 100]
     assert result.excluded_files == 1
+
+
+def test_short_path_keeps_drive_and_end():
+    from filescan.review.model import short_path
+
+    assert short_path(r"C:\Users\David\Pictures") == r"C:\Users\David\Pictures"
+    assert short_path(r"\\192.168.1.133\disk3\photos\2016") == r"disk3\photos\2016"
+    long = r"\\192.168.1.133\disk3\.Trash-1000\files\E6510-first-disk\backup.0\kdrive\Users\David\VirtualBox VMs\Win7"
+    shown = short_path(long, width=30)
+    assert shown.startswith("disk3\\\u2026\\") and shown.endswith(r"VirtualBox VMs\Win7")
