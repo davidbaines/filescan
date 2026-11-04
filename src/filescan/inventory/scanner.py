@@ -23,6 +23,7 @@ def _is_link(entry: os.DirEntry) -> bool:
     except OSError:
         return True
 
+
 # Windows error codes that are expected during a system-wide scan and logged silently.
 _SILENT_WINERRORS: frozenset[int] = frozenset({
     2,   # ERROR_FILE_NOT_FOUND  — file disappeared between listing and stat

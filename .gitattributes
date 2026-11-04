@@ -1,0 +1,4 @@
+src/**/*.py text eol=lf
+tests/**/*.py text eol=lf
+server/**/*.py text eol=lf
+*.md text eol=lf
