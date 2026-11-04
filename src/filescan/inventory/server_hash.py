@@ -38,7 +38,7 @@ def ssh_hash_runner(config: ScanConfig) -> HashRunner:
     def run(root_config: RootConfig, posix_paths: list[str]) -> Iterable[dict]:
         job = "hash-" + (root_config.path.name or str(root_config.path).strip("\\").replace("\\", "_"))
         job_in, job_out = f"{WORK_DIR}/{job}.in.jsonl", f"{WORK_DIR}/{job}.out.jsonl"
-        ssh = ["ssh", "-o", "BatchMode=yes", config.server_ssh]
+        ssh = ["ssh", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=60", config.server_ssh]
         payload = "".join(json.dumps(p) + "\n" for p in posix_paths).encode("utf-8", "surrogateescape")
         subprocess.run(ssh + [f"mkdir -p {WORK_DIR} && cat > {job_in}"], input=payload, check=True)
         with FSAGENT.open("rb") as script:

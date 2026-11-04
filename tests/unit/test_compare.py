@@ -128,3 +128,25 @@ def test_compare_lists_pc_files_without_identical_copy_on_server(tmp_path: Path)
     summary = list(csv.DictReader(result.summary_csv.open(encoding="utf-8-sig")))
     docs = next(r for r in summary if r["top_folder"].endswith("Docs"))
     assert int(docs["missing_files"]) == 2
+
+
+def test_hash_server_hashes_only_server_files_with_shared_sizes(tmp_path: Path) -> None:
+    from filescan.compare import run_hash_server_for_config
+
+    config, _pc, _srv = _setup(tmp_path)
+    seen: list[str] = []
+
+    def runner(root_config, paths):
+        seen.extend(paths)
+        return _local_hash_runner(paths)
+
+    run_hash_server_for_config(config, server_runner=runner)
+
+    names = sorted(Path(p).name for p in seen)
+    # same.jpg, other-name.jpg and edited.txt all share a size with some other file;
+    # nothing on the PC side is touched.
+    assert names == ["edited.txt", "other-name.jpg", "same.jpg"]
+    # A second run finds nothing left to hash.
+    seen.clear()
+    run_hash_server_for_config(config, server_runner=runner)
+    assert seen == []

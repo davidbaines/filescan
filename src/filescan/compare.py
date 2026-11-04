@@ -34,7 +34,7 @@ class CompareResult:
     missing_bytes: int
 
 
-@dataclass
+@dataclass(slots=True)
 class _Row:
     id: int
     path: str
@@ -189,3 +189,31 @@ def run_compare_for_config(config: ScanConfig, *, server_runner: HashRunner | No
 
 def run_compare(config_path: str | Path) -> CompareResult:
     return run_compare_for_config(load_config(config_path))
+
+
+def run_hash_server_for_config(config: ScanConfig, *, server_runner: HashRunner | None = None) -> int:
+    """Hash, on the server, every server file whose size occurs more than once anywhere.
+
+    A unique size cannot have a duplicate, so those files are never read. The
+    results feed duplicate detection within the server and the master build.
+    """
+    db = SQLiteDB(config.database_path)
+    try:
+        pc_rows, server_rows = _load_rows(db, config)
+    finally:
+        db.close()
+    counts: dict[int, int] = {}
+    for row in (*pc_rows, *server_rows):
+        if not row.attributes & CLOUD_PLACEHOLDER_MASK:
+            counts[row.size] = counts.get(row.size, 0) + 1
+    todo = [r for r in server_rows if r.full_hash is None and counts.get(r.size, 0) > 1]
+    print(f"{len(todo):,} server files ({sum(r.size for r in todo) / 1e9:,.1f} GB) share a size and need hashing")
+    if todo:
+        records = [FileRecord(path=Path(r.path), folder_path=Path(r.folder), filename=Path(r.path).name,
+                              size=r.size, mtime=0.0, ctime=0.0, id=r.id) for r in todo]
+        ServerHasher(config, runner=server_runner).hash_files(records)
+    return len(todo)
+
+
+def run_hash_server(config_path: str | Path) -> int:
+    return run_hash_server_for_config(load_config(config_path))

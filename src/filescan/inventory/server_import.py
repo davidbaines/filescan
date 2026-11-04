@@ -65,7 +65,7 @@ def posix_to_unc(posix_path: str, server_root: str, unc_root: Path) -> Path | No
 
 def ssh_runner(config: ScanConfig) -> Runner:
     def run(root_config: RootConfig) -> Iterator[str]:
-        command = ["ssh", "-o", "BatchMode=yes", config.server_ssh, config.server_python, "-", "list",
+        command = ["ssh", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=60", config.server_ssh, config.server_python, "-", "list",
                    root_config.server_path]
         for name in root_config.exclude_dirs:
             command += ["--exclude-dir", name]
