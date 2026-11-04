@@ -15,6 +15,7 @@ from filescan.inventory.server_import import run_import_server
 from filescan.planning.artifacts import load_plan_artifact
 from filescan.planning.proposals import build_plan_artifact
 from filescan.reporting.exclusions import run_exclusions_report
+from filescan.reporting.measure import run_measure
 from filescan.reporting.largest_files import _fmt_size, find_large_files, run_largest
 from filescan.reporting.xlsx import write_report
 from filescan.review.app import run_review
@@ -72,6 +73,10 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "unwanted-report",
         help="Apply the unwanted-data rules outside the exclusions and report matches by folder (CSV).",
+    )
+    subparsers.add_parser(
+        "measure",
+        help="Phase 4 checkpoint: distinct size of the organised set, against PC and server disk space.",
     )
     review_parser = subparsers.add_parser(
         "review",
@@ -234,6 +239,9 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "unwanted-report":
         _stage_start("unwanted-report")
         run_unwanted_report(args.config)
+    elif args.command == "measure":
+        _stage_start("measure")
+        run_measure(args.config)
     elif args.command == "review":
         _stage_start("review")
         run_review(args.config, args.scope, split_gb=args.split_gb)

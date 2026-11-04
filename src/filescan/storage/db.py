@@ -114,6 +114,12 @@ class SQLiteDB:
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS unwanted_matches (
+                file_id INTEGER PRIMARY KEY REFERENCES files(id),
+                rule TEXT NOT NULL,
+                disposition TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS review_decisions (
                 scope TEXT NOT NULL,
                 path TEXT NOT NULL,

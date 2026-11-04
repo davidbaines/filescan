@@ -6,6 +6,9 @@
 #                 whole folder. The whole subtree is reported under that folder.
 # match: file     pattern is a regex searched in the file name. `within`, if
 #                 given, is a regex the folder path must also match.
+# match: version  pattern finds a version stamp in the file name; its one group
+#                 must sort oldest first. Every version except the newest of
+#                 each file in a folder matches.
 # disposition:    delete-candidate (safe to delete once reviewed in bulk) or
 #                 review (look before deciding). Nothing is ever deleted by
 #                 this report.
@@ -55,6 +58,14 @@ rules:
     category: screenshots
     disposition: review
     reason: Screenshot folders
+
+  # ------------------------------------------------------------ versions
+  - name: file-history-old-versions
+    match: version
+    pattern: ' \((\d{4}_\d\d_\d\d \d\d_\d\d_\d\d) UTC\)'
+    category: versions
+    disposition: review
+    reason: Older Windows File History versions; the newest version of each file is kept
 
   # ------------------------------------------------------------ files
   - name: os-junk

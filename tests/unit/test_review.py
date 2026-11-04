@@ -198,3 +198,56 @@ def test_accept_all_needs_a_second_press(tmp_path):
         assert session.stored_decisions() == {((T + r"\Program Files").lower(), TREE): TRASH}
     finally:
         db.close()
+
+
+def test_version_rule_matches_all_but_the_newest(tmp_path):
+    from filescan.cleanup.unwanted import run_unwanted_report_for_config
+
+    config = _config(tmp_path)
+    db = SQLiteDB(config.database_path)
+    base = str(tmp_path / "pc" / "Docs")
+    _add(FileRepository(db), {
+        base + r"\report (2017_02_21 10_00_00 UTC).docx": (10, "v1"),
+        base + r"\report (2017_02_23 09_00_00 UTC).docx": (20, "v3"),
+        base + r"\report (2017_02_22 10_00_00 UTC).docx": (30, "v2"),
+        base + r"\other (2017_02_21 10_00_00 UTC).txt": (5, "o1"),
+        base + r"\plain.txt": (7, "p"),
+    })
+    db.close()
+    rules = parse_rules({"rules": [{"name": "fh", "match": "version",
+                                    "pattern": r" \((\d{4}_\d\d_\d\d \d\d_\d\d_\d\d) UTC\)"}]})
+    result = run_unwanted_report_for_config(config, rules)
+    assert result.by_rule["fh"] == (2, 40, 40)
+    listed = result.files_csv.read_text(encoding="utf-8-sig")
+    assert "2017_02_21 10_00_00 UTC).docx" in listed and "2017_02_22" in listed
+    assert "2017_02_23" not in listed and "other" not in listed
+
+
+def test_measure_counts_distinct_content_and_unwanted_levels(tmp_path):
+    from filescan.reporting.measure import DELETE, NORMAL, REVIEW, measure
+
+    config = _config(tmp_path)
+    db = SQLiteDB(config.database_path)
+    try:
+        _add(FileRepository(db), {
+            r"C:\pc\Photos\a.jpg": (100, "same"),
+            r"\\srv\disk3\photos\a-copy.jpg": (100, "same"),       # both places, counted once
+            r"C:\pc\Docs\only-pc.txt": (10, None),
+            r"\\srv\disk3\music\only-server.mp3": (20, "srv"),
+            r"C:\pc\Acronis\image.tib": (1000, "img"),               # excluded
+            r"C:\pc\Downloads\setup.msi": (30, "msi"),               # unwanted: review
+            r"C:\pc\Cache\blob": (40, "cache"),                       # unwanted: delete-candidate
+        })
+        ids = {row["path"]: row["id"] for row in db.conn.execute("SELECT id, path FROM files")}
+        db.conn.executemany("INSERT INTO unwanted_matches VALUES (?, ?, ?)", [
+            (ids[r"C:\pc\Downloads\setup.msi"], "installers", "review"),
+            (ids[r"C:\pc\Cache\blob"], "caches", "delete-candidate"),
+        ])
+        db.conn.commit()
+        result = measure(db, config)
+    finally:
+        db.close()
+    assert result.distinct[DELETE] == [80, 20, 100]
+    assert result.distinct[REVIEW] == [40, 20, 100]
+    assert result.distinct[NORMAL] == [10, 20, 100]
+    assert result.excluded_files == 1

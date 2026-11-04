@@ -7,7 +7,12 @@ folder; file-rule matches are rolled up to the top folder under their root,
 which keeps the report to a readable length. Every matched file is also
 listed in a second CSV.
 
-The report changes nothing on disk.
+A version rule recognises copies that carry a version stamp in their name,
+such as Windows File History's "report (2017_02_23 14_58_33 UTC).docx". It
+matches every version except the newest of each file in the same folder.
+
+The report changes nothing on disk. Its matches are also stored in the
+unwanted_matches table (replaced on every run) for `filescan measure`.
 """
 
 from __future__ import annotations
@@ -47,6 +52,15 @@ class UnwantedRule:
     def matches_folder(self, folder: str) -> bool:
         return self.match == "folder" and self.folder_match_end(folder) is not None
 
+    def version_stamp(self, filename: str) -> tuple[str, str] | None:
+        """For a version rule: (name without the stamp, stamp), or None."""
+        if self.match != "version":
+            return None
+        m = self.pattern.search(filename)
+        if m is None:
+            return None
+        return (filename[:m.start()] + filename[m.end():]).lower(), m.group(1)
+
     def matches_file(self, folder: str, filename: str) -> bool:
         if self.match != "file":
             return False
@@ -62,12 +76,14 @@ def parse_rules(data: dict) -> list[UnwantedRule]:
         match = item.get("match")
         pattern = item.get("pattern")
         disposition = item.get("disposition", "review")
-        if not name or match not in ("file", "folder") or not pattern:
-            raise ValueError(f"Unwanted rule needs name, match (file or folder) and pattern: {item!r}")
+        if not name or match not in ("file", "folder", "version") or not pattern:
+            raise ValueError(f"Unwanted rule needs name, match (file, folder or version) and pattern: {item!r}")
         if disposition not in _DISPOSITIONS:
             raise ValueError(f"Unwanted rule {name!r}: disposition must be one of {_DISPOSITIONS}")
         if match == "folder" and not str(pattern).endswith("\\\\"):
             raise ValueError(f"Folder rule {name!r}: the pattern must end with \\\\ so it matches whole folders")
+        if match == "version" and re.compile(str(pattern)).groups != 1:
+            raise ValueError(f"Version rule {name!r}: the pattern needs exactly one group, the sortable stamp")
         within = item.get("within")
         rules.append(UnwantedRule(
             name=str(name), match=match, pattern=re.compile(str(pattern), re.IGNORECASE),
@@ -82,6 +98,31 @@ def load_unwanted_rules(config: ScanConfig | None = None, path: Path | None = No
     path = path or getattr(config, "unwanted_rules_path", None) or DEFAULT_RULES
     with Path(path).open(encoding="utf-8") as handle:
         return parse_rules(yaml.safe_load(handle))
+
+
+def _newest_versions(db: SQLiteDB, version_rules: list[UnwantedRule]) -> dict[tuple[str, int, str], str]:
+    """{(rule, folder id, name without stamp): newest stamp} for every versioned file."""
+    newest: dict[tuple[str, int, str], str] = {}
+    if not version_rules:
+        return newest
+    for folder_id, filename in db.conn.execute("SELECT folder_id, filename FROM files WHERE is_missing = 0"):
+        for rule in version_rules:
+            found = rule.version_stamp(filename)
+            if found is not None:
+                key = (rule.name, int(folder_id), found[0])
+                if found[1] > newest.get(key, ""):
+                    newest[key] = found[1]
+                break
+    return newest
+
+
+def _older_version_rule(version_rules: list[UnwantedRule], newest: dict[tuple[str, int, str], str],
+                        folder_id: int, filename: str) -> UnwantedRule | None:
+    for rule in version_rules:
+        found = rule.version_stamp(filename)
+        if found is not None:
+            return rule if found[1] < newest[(rule.name, folder_id, found[0])] else None
+    return None
 
 
 def _top_folder(folder: str, roots: list[str]) -> str:
@@ -115,6 +156,7 @@ def run_unwanted_report_for_config(config: ScanConfig, rules: list[UnwantedRule]
     rules = rules if rules is not None else load_unwanted_rules(config)
     folder_rules = [r for r in rules if r.match == "folder"]
     file_rules = [r for r in rules if r.match == "file"]
+    version_rules = [r for r in rules if r.match == "version"]
     roots = sorted((str(p) for p in config.roots), key=len, reverse=True)
     db = SQLiteDB(config.database_path)
     out_dir = config.filescan_folder
@@ -124,12 +166,14 @@ def run_unwanted_report_for_config(config: ScanConfig, rules: list[UnwantedRule]
     rows: dict[tuple[str, str], _Row] = {}
     rule_content: dict[str, dict[str, int]] = {r.name: {} for r in rules}
     rule_counts: dict[str, list[int]] = {r.name: [0, 0] for r in rules}
+    matches: list[tuple[int, str, str]] = []
     try:
         excluded = classify_folders(db, config)
+        newest = _newest_versions(db, version_rules)
         folder_cache: dict[int, tuple[UnwantedRule, str] | None] = {}
         total = db.conn.execute("SELECT COUNT(*) FROM files WHERE is_missing = 0").fetchone()[0]
         query = """
-            SELECT f.folder_id, fo.path AS folder, f.filename, f.path, f.size, h.full_hash
+            SELECT f.id, f.folder_id, fo.path AS folder, f.filename, f.path, f.size, h.full_hash
             FROM files f
             JOIN folders fo ON fo.id = f.folder_id
             LEFT JOIN file_hashes h ON h.file_id = f.id
@@ -155,7 +199,9 @@ def run_unwanted_report_for_config(config: ScanConfig, rules: list[UnwantedRule]
                     folder_cache[folder_id] = hit
                 hit = folder_cache[folder_id]
                 if hit is None:
-                    rule = next((fr for fr in file_rules if fr.matches_file(folder, r["filename"])), None)
+                    rule = _older_version_rule(version_rules, newest, folder_id, r["filename"])
+                    if rule is None:
+                        rule = next((fr for fr in file_rules if fr.matches_file(folder, r["filename"])), None)
                     if rule is None:
                         continue
                     hit = (rule, _top_folder(folder, roots))
@@ -170,6 +216,11 @@ def run_unwanted_report_for_config(config: ScanConfig, rules: list[UnwantedRule]
                 rule_counts[rule.name][0] += 1
                 rule_counts[rule.name][1] += size
                 writer.writerow([rule.name, rule.category, rule.disposition, size, r["path"]])
+                matches.append((int(r["id"]), rule.name, rule.disposition))
+        # One short transaction at the end, so other commands are not locked out meanwhile.
+        db.conn.execute("DELETE FROM unwanted_matches")
+        db.conn.executemany("INSERT INTO unwanted_matches (file_id, rule, disposition) VALUES (?, ?, ?)", matches)
+        db.conn.commit()
     finally:
         db.close()
 
