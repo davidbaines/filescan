@@ -6,6 +6,7 @@ from pathlib import Path
 from filescan.inventory.normalizer import normalize_path
 from filescan.models import DuplicateGroup, FileRecord, FolderRecord, FolderSimilarityCandidate
 from filescan.storage.db import SQLiteDB
+from filescan.storage.sql import path_prefix
 
 
 class FileRepository:
@@ -24,10 +25,7 @@ class FileRepository:
         return latest_id
 
     def _path_prefix(self, root: Path) -> tuple[str, str]:
-        root_str = str(root)
-        # Drive roots (e.g. "F:\") already end with a backslash — strip it before
-        # adding the LIKE wildcard so the pattern stays "F:\%" not "F:\\%".
-        return root_str, root_str.rstrip("\\") + "\\%"
+        return path_prefix(root)
 
     def get_folder_id(self, folder_path: Path) -> int | None:
         normalized = normalize_path(folder_path)
@@ -121,7 +119,7 @@ class FileRepository:
             """
             UPDATE files
             SET is_missing = 1
-            WHERE (path = ? OR path LIKE ?)
+            WHERE (path = ? OR path LIKE ? ESCAPE '|')
               AND scan_run_id < ?
             """,
             (exact, prefix, scan_run_id),
@@ -130,7 +128,7 @@ class FileRepository:
             """
             UPDATE folders
             SET is_missing = 1
-            WHERE (path = ? OR path LIKE ?)
+            WHERE (path = ? OR path LIKE ? ESCAPE '|')
               AND scan_run_id < ?
             """,
             (exact, prefix, scan_run_id),

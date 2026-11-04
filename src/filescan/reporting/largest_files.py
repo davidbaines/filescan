@@ -12,6 +12,7 @@ from filescan.config import load_config
 from filescan.inventory.refresh import refresh_file_records
 from filescan.models import ScanConfig
 from filescan.storage import SQLiteDB
+from filescan.storage.sql import path_prefix
 
 
 def _fmt_size(b: int) -> str:
@@ -26,14 +27,13 @@ def _query_large_files(db: SQLiteDB, config: ScanConfig) -> list[tuple[Path, int
     results: list[tuple[Path, int]] = []
     for root in config.roots:
         threshold = config.large_file_size_for(root)
-        root_str = str(root)
-        like_pattern = root_str.rstrip("\\") + "\\%"
+        root_str, like_pattern = path_prefix(root)
         rows = db.conn.execute(
             """
             SELECT f.path, f.size
             FROM files f
             JOIN folders fo ON fo.id = f.folder_id
-            WHERE (fo.path = ? OR fo.path LIKE ?)
+            WHERE (fo.path = ? OR fo.path LIKE ? ESCAPE '|')
               AND f.size >= ?
               AND f.is_missing = 0
               AND fo.is_missing = 0

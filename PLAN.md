@@ -100,7 +100,7 @@ Files are scattered across the PC (C: user folders, D:, E:, F:), the LaCie J: an
 
 - [x] **Stale hashes.** In `storage/repositories.py` `upsert_files`, delete a file's `file_hashes` row when its size or mtime changes.
 - [ ] **Delta scans miss in-place edits.** Add `scan --verify-files`, which compares each file's size and mtime even when the folder's mtime hasn't changed.
-- [ ] **LIKE wildcards.** Write one helper that escapes `_`, `%` and `\` and uses `ESCAPE`, and use it in `_path_prefix`, `clusters.py` and the waste detector.
+- [x] **LIKE wildcards.** Write one helper that escapes `_`, `%` and `\` and uses `ESCAPE`, and use it in `_path_prefix`, `clusters.py` and the waste detector.
 - [ ] **Resolving every path.** Call `normalize_path` with `.resolve()` only for config roots. Paths read back from the database become plain `Path(...)`.
 - [ ] **Scanner round trips.** Switch `_scan_folder` to `os.scandir`, which is a documented exception to the pathlib rule. Drop the full pre-walk in `_count_folders` for network roots.
 - [ ] **Hashing at scale.** Make `DuplicateDetector.run` group by size in SQL, streaming one size group at a time. Set the threshold to 1 byte in `C:\filescan\config.yml`.

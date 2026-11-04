@@ -8,6 +8,7 @@ from tqdm import tqdm
 
 from filescan.models import ClusterMember, FolderCluster, ScanConfig
 from filescan.storage import FileRepository, SQLiteDB
+from filescan.storage.sql import path_prefix
 
 
 class _UnionFind:
@@ -91,14 +92,14 @@ def _find_unique_files(db: SQLiteDB, folder_path: Path, master_path: Path) -> li
         FROM files f
         JOIN folders fo ON fo.id = f.folder_id
         LEFT JOIN file_hashes fh ON fh.file_id = f.id
-        WHERE (fo.path = ? OR fo.path LIKE ?)
+        WHERE (fo.path = ? OR fo.path LIKE ? ESCAPE '|')
           AND f.is_missing = 0
           AND fo.is_missing = 0
     """
     folder_str = str(folder_path).rstrip("\\")
     master_str = str(master_path).rstrip("\\")
 
-    master_rows = db.conn.execute(_QUERY, (master_str, master_str + "\\%")).fetchall()
+    master_rows = db.conn.execute(_QUERY, path_prefix(master_str)).fetchall()
     master_prefix_len = len(master_str) + 1
     master_hashes: set[str] = set()
     master_rel_size: set[tuple[str, int]] = set()
@@ -107,7 +108,7 @@ def _find_unique_files(db: SQLiteDB, folder_path: Path, master_path: Path) -> li
             master_hashes.add(row["full_hash"])
         master_rel_size.add((row["path"][master_prefix_len:], int(row["size"])))
 
-    folder_rows = db.conn.execute(_QUERY, (folder_str, folder_str + "\\%")).fetchall()
+    folder_rows = db.conn.execute(_QUERY, path_prefix(folder_str)).fetchall()
     folder_prefix_len = len(folder_str) + 1
     unique: list[Path] = []
     for row in folder_rows:
@@ -222,14 +223,13 @@ def build_clusters(config: ScanConfig, db: SQLiteDB) -> list[FolderCluster]:
 
         members: list[ClusterMember] = []
         for path in paths:
-            path_str = str(path)
-            path_like = path_str.rstrip("\\") + "\\%"
+            path_str, path_like = path_prefix(path)
             row = db.conn.execute(
                 """
                 SELECT COUNT(*) AS file_count, COALESCE(SUM(f.size), 0) AS total_bytes
                 FROM files f
                 JOIN folders fo ON fo.id = f.folder_id
-                WHERE (fo.path = ? OR fo.path LIKE ?)
+                WHERE (fo.path = ? OR fo.path LIKE ? ESCAPE '|')
                   AND f.is_missing = 0
                   AND fo.is_missing = 0
                 """,

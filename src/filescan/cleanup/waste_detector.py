@@ -19,6 +19,7 @@ from filescan.inventory.refresh import refresh_folder_subtrees
 from filescan.models import FolderRecord
 from filescan.progress import track
 from filescan.storage import FileRepository, SQLiteDB
+from filescan.storage.sql import path_prefix
 
 
 @dataclass(slots=True)
@@ -89,14 +90,13 @@ def _match_folder(folder: FolderRecord) -> tuple[str, str, bool] | None:
 
 
 def _recursive_stats(db: SQLiteDB, folder_path: Path) -> tuple[int, int]:
-    path_str = str(folder_path)
-    like_pattern = path_str.rstrip("\\") + "\\%"
+    path_str, like_pattern = path_prefix(folder_path)
     row = db.conn.execute(
         """
         SELECT COALESCE(SUM(f.size), 0) AS total_bytes, COUNT(f.id) AS file_count
         FROM files f
         JOIN folders fo ON fo.id = f.folder_id
-        WHERE (fo.path = ? OR fo.path LIKE ?)
+        WHERE (fo.path = ? OR fo.path LIKE ? ESCAPE '|')
           AND f.is_missing = 0
           AND fo.is_missing = 0
         """,

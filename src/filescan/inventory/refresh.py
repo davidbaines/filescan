@@ -4,6 +4,7 @@ from pathlib import Path
 
 from filescan.progress import track
 from filescan.storage.db import SQLiteDB
+from filescan.storage.sql import path_prefix
 
 
 def refresh_file_records(db: SQLiteDB, file_paths: list[Path]) -> int:
@@ -39,17 +40,16 @@ def refresh_folder_subtrees(db: SQLiteDB, folder_paths: list[Path]) -> int:
     all_file_paths: list[Path] = []
 
     for root in folder_paths:
-        root_str = str(root)
-        like_pattern = root_str.rstrip("\\") + "\\%"
+        root_str, like_pattern = path_prefix(root)
         if not root.is_dir():
             c1 = db.conn.execute(
-                "UPDATE folders SET is_missing=1 WHERE path=? OR path LIKE ?",
+                "UPDATE folders SET is_missing=1 WHERE path=? OR path LIKE ? ESCAPE '|'",
                 (root_str, like_pattern),
             )
             c2 = db.conn.execute(
                 """UPDATE files SET is_missing=1
                    WHERE folder_id IN (
-                       SELECT id FROM folders WHERE path=? OR path LIKE ?
+                       SELECT id FROM folders WHERE path=? OR path LIKE ? ESCAPE '|'
                    )""",
                 (root_str, like_pattern),
             )
@@ -58,7 +58,7 @@ def refresh_folder_subtrees(db: SQLiteDB, folder_paths: list[Path]) -> int:
             rows = db.conn.execute(
                 """SELECT fi.path FROM files fi
                    JOIN folders fo ON fo.id = fi.folder_id
-                   WHERE (fo.path = ? OR fo.path LIKE ?) AND fi.is_missing = 0""",
+                   WHERE (fo.path = ? OR fo.path LIKE ? ESCAPE '|') AND fi.is_missing = 0""",
                 (root_str, like_pattern),
             ).fetchall()
             all_file_paths.extend(Path(row["path"]) for row in rows)
