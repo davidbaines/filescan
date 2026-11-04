@@ -88,3 +88,49 @@ def test_legacy_file_hashes_table_is_migrated_before_hash_updates(tmp_path: Path
     assert row["quick_hash"] == "quick-digest"
     assert row["updated_at"] is not None
     db.close()
+
+
+def _hash_row(db, path: Path):
+    return db.conn.execute(
+        "SELECT fh.quick_hash, fh.full_hash FROM file_hashes fh JOIN files f ON f.id = fh.file_id WHERE f.path = ?",
+        (str(path),),
+    ).fetchone()
+
+
+def test_upsert_files_clears_hashes_when_file_content_changes(tmp_path: Path, make_repo) -> None:
+    import os
+
+    root = tmp_path / "root"
+    created = build_tree(root, {"a.txt": b"original", "b.txt": b"unchanged"})
+    db, repo = make_repo(tmp_path / "repository.db")
+    index_paths(repo, root, created)
+    for record in repo.list_active_files():
+        repo.upsert_file_hash(record.id, quick_hash="q", full_hash="f")
+
+    edited = created[0] if created[0].name == "a.txt" else created[1]
+    untouched = created[1] if edited is created[0] else created[0]
+    edited.write_bytes(b"edited content, longer")
+    os.utime(edited, (edited.stat().st_atime, edited.stat().st_mtime + 10))
+    index_paths(repo, root, created)
+
+    assert _hash_row(db, edited) is None
+    assert tuple(_hash_row(db, untouched)) == ("q", "f")
+    db.close()
+
+
+def test_upsert_files_clears_hashes_when_only_mtime_changes(tmp_path: Path, make_repo) -> None:
+    import os
+
+    root = tmp_path / "root"
+    created = build_tree(root, {"a.txt": b"same-size-1"})
+    db, repo = make_repo(tmp_path / "repository.db")
+    index_paths(repo, root, created)
+    record = repo.list_active_files()[0]
+    repo.upsert_file_hash(record.id, quick_hash="q", full_hash="f")
+
+    created[0].write_bytes(b"same-size-2")
+    os.utime(created[0], (created[0].stat().st_atime, created[0].stat().st_mtime + 10))
+    index_paths(repo, root, created)
+
+    assert _hash_row(db, created[0]) is None
+    db.close()

@@ -79,6 +79,16 @@ class FileRepository:
         if folder_id is None:
             raise ValueError(f"Folder must exist before files are upserted: {folder_path}")
         for file_record in files:
+            # A changed size or mtime means the stored hashes may describe old content.
+            self.db.conn.execute(
+                """
+                DELETE FROM file_hashes
+                WHERE file_id = (
+                    SELECT id FROM files WHERE path = ? AND (size != ? OR mtime != ?)
+                )
+                """,
+                (str(file_record.path), file_record.size, file_record.mtime),
+            )
             self.db.conn.execute(
                 """
                 INSERT INTO files (folder_id, filename, path, size, mtime, ctime, scan_run_id, is_missing, last_scanned_at)

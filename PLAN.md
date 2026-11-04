@@ -98,7 +98,7 @@ Files are scattered across the PC (C: user folders, D:, E:, F:), the LaCie J: an
 
 ### Phase 1: fixes to filescan before any rescan (TDD)
 
-- [ ] **Stale hashes.** In `storage/repositories.py` `upsert_files`, delete a file's `file_hashes` row when its size or mtime changes.
+- [x] **Stale hashes.** In `storage/repositories.py` `upsert_files`, delete a file's `file_hashes` row when its size or mtime changes.
 - [ ] **Delta scans miss in-place edits.** Add `scan --verify-files`, which compares each file's size and mtime even when the folder's mtime hasn't changed.
 - [ ] **LIKE wildcards.** Write one helper that escapes `_`, `%` and `\` and uses `ESCAPE`, and use it in `_path_prefix`, `clusters.py` and the waste detector.
 - [ ] **Resolving every path.** Call `normalize_path` with `.resolve()` only for config roots. Paths read back from the database become plain `Path(...)`.
