@@ -1,0 +1,130 @@
+# Rules for finding unwanted data. `filescan unwanted-report` applies them to
+# everything outside the exclusions in config.yml.
+#
+# match: folder   pattern is a regex searched in the folder path with a trailing
+#                 backslash; it must end with \\ so that the matched part is a
+#                 whole folder. The whole subtree is reported under that folder.
+# match: file     pattern is a regex searched in the file name. `within`, if
+#                 given, is a regex the folder path must also match.
+# disposition:    delete-candidate (safe to delete once reviewed in bulk) or
+#                 review (look before deciding). Nothing is ever deleted by
+#                 this report.
+# Matching is case-insensitive. The first matching rule wins, folder rules
+# before file rules.
+
+rules:
+  # ------------------------------------------------------------ folders
+  - name: recycle-bin
+    match: folder
+    pattern: '\\\$RECYCLE\.BIN\\'
+    category: junk
+    disposition: delete-candidate
+    reason: Windows Recycle Bin contents
+
+  - name: build-output
+    match: folder
+    pattern: '\\(bin\\(Debug|Release)|obj\\(Debug|Release)|\.gradle|\.m2|\.nuget\\packages|\.pytest_cache|\.mypy_cache|\.ruff_cache|\.next|\.parcel-cache|\.ipynb_checkpoints|\.eggs|[^\\]+\.egg-info|site-packages)\\'
+    category: build-output
+    disposition: delete-candidate
+    reason: Build output and package caches that can be regenerated
+
+  - name: caches
+    match: folder
+    pattern: '\\(Cache|Caches|cache2|Code Cache|GPUCache|ShaderCache|CachedData|Temporary Internet Files|INetCache|\.thumbnails)\\'
+    category: caches
+    disposition: delete-candidate
+    reason: Application and thumbnail caches
+
+  - name: temp-folders
+    match: folder
+    pattern: '\\(Temp|tmp)\\'
+    category: temp
+    disposition: review
+    reason: Folders named Temp or tmp
+
+  - name: whatsapp-folders
+    match: folder
+    pattern: '\\WhatsApp[^\\]*\\'
+    category: whatsapp
+    disposition: review
+    reason: WhatsApp media, often forwarded images and duplicates
+
+  - name: screenshot-folders
+    match: folder
+    pattern: '\\Screenshots\\'
+    category: screenshots
+    disposition: review
+    reason: Screenshot folders
+
+  # ------------------------------------------------------------ files
+  - name: os-junk
+    match: file
+    pattern: '^(Thumbs\.db|ehthumbs(_vista)?\.db|desktop\.ini|\.DS_Store|\._.*)$'
+    category: junk
+    disposition: delete-candidate
+    reason: Thumbnail databases and Windows or macOS folder metadata
+
+  - name: temp-files
+    match: file
+    pattern: '(^~\$|\.(tmp|temp|crdownload|part|partial)$)'
+    category: temp
+    disposition: delete-candidate
+    reason: Office lock files, temporary files and unfinished downloads
+
+  - name: crash-dumps
+    match: file
+    pattern: '\.(dmp|mdmp|hdmp)$'
+    category: junk
+    disposition: delete-candidate
+    reason: Crash dumps
+
+  - name: vm-images
+    match: file
+    pattern: '\.(vmdk|vdi|vhd|vhdx|avhdx|qcow2|ova)$'
+    category: vm-images
+    disposition: review
+    reason: Virtual machine disks, usually large and rebuildable
+
+  - name: disk-images
+    match: file
+    pattern: '\.(iso|dmg|nrg)$'
+    category: installers
+    disposition: review
+    reason: CD, DVD and disk images, usually re-downloadable
+
+  - name: installers
+    match: file
+    pattern: '(\.(msi|msp|msu)$|(setup|install|installer)[^\\]*\.exe$)'
+    category: installers
+    disposition: review
+    reason: Installers, usually re-downloadable
+
+  - name: takeout-sidecars
+    match: file
+    within: '\\Takeout\\'
+    pattern: '\.json$'
+    category: takeout
+    disposition: review
+    reason: Google Takeout metadata files (dates and places for photos)
+
+  - name: takeout-edited
+    match: file
+    within: '\\Takeout\\'
+    pattern: '-(edited|bearbeitet)\.(jpe?g|png|heic|mp4)$'
+    category: takeout
+    disposition: review
+    reason: Edited copies that Google Takeout exports beside the originals
+
+  - name: screenshots
+    match: file
+    pattern: '^(Screenshot|Screen Shot|Capture|Snip)[ _-].*\.(png|jpe?g)$'
+    category: screenshots
+    disposition: review
+    reason: Screenshots
+
+  - name: whatsapp-media
+    match: file
+    pattern: '^(IMG|VID|AUD|PTT|STK)-\d{8}-WA\d+'
+    category: whatsapp
+    disposition: review
+    reason: WhatsApp media files

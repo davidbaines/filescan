@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from filescan.cleanup.unwanted import run_unwanted_report
 from filescan.cleanup.waste_detector import find_waste_candidates, print_waste_report, write_waste_shortcuts
 from filescan.compare import run_compare, run_hash_server
 from filescan.config import load_config
@@ -16,6 +17,7 @@ from filescan.planning.proposals import build_plan_artifact
 from filescan.reporting.exclusions import run_exclusions_report
 from filescan.reporting.largest_files import _fmt_size, find_large_files, run_largest
 from filescan.reporting.xlsx import write_report
+from filescan.review.app import run_review
 from filescan.similarity.clusters import dump_clusters_json, find_clusters
 from filescan.similarity.folders import run_similarity
 from filescan.similarity.merge_review import run_merge_review
@@ -67,6 +69,17 @@ def build_parser() -> argparse.ArgumentParser:
         "hash-server",
         help="Hash, on the server, every server file whose size occurs more than once (resumable).",
     )
+    subparsers.add_parser(
+        "unwanted-report",
+        help="Apply the unwanted-data rules outside the exclusions and report matches by folder (CSV).",
+    )
+    review_parser = subparsers.add_parser(
+        "review",
+        help="Review a delete-candidate exclusion (such as server-trash) folder by folder: keep or trash.",
+    )
+    review_parser.add_argument("scope", nargs="?", default=None, help="Name of a delete-candidate exclusion rule.")
+    review_parser.add_argument("--split-gb", type=float, default=5.0,
+                               help="Split folders holding more unique data than this (default 5 GB).")
     subparsers.add_parser(
         "exclusions-report",
         help="List the folders each exclusion rule leaves out of the organised set, with sizes (CSV).",
@@ -218,6 +231,12 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "hash-server":
         _stage_start("hash-server")
         run_hash_server(args.config)
+    elif args.command == "unwanted-report":
+        _stage_start("unwanted-report")
+        run_unwanted_report(args.config)
+    elif args.command == "review":
+        _stage_start("review")
+        run_review(args.config, args.scope, split_gb=args.split_gb)
     elif args.command == "exclusions-report":
         _stage_start("exclusions-report")
         print(run_exclusions_report(args.config))

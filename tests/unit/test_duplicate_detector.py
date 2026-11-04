@@ -226,3 +226,40 @@ def test_duplicate_detector_never_hashes_cloud_placeholders(tmp_path: Path, make
     )}
     assert "c.bin" not in hashed
     db.close()
+
+
+def test_no_write_transaction_is_left_open_between_batches(tmp_path, write_config):
+    """Hashes wait in memory, so other filescan commands are never locked out mid-run."""
+    from filescan.dedupe.duplicates import DuplicateDetector
+    from filescan.models import FileRecord
+    from filescan.storage import FileRepository, SQLiteDB
+    from filescan.config import load_config
+
+    folder = tmp_path / "data"
+    folder.mkdir()
+    (folder / "a.bin").write_bytes(b"x" * 64)
+    (folder / "b.bin").write_bytes(b"y" * 64)
+    config = load_config(write_config([folder]))
+    from filescan.inventory.scanner import InventoryScanner
+
+    InventoryScanner(config, rescan=True).scan()
+    db = SQLiteDB(config.database_path)
+    repo = FileRepository(db)
+    try:
+        records = repo.files_of_size(64)
+        detector = DuplicateDetector(config)
+        from concurrent.futures import ThreadPoolExecutor
+
+        class _Bar:
+            def update(self, _n):
+                pass
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            detector._populate_hashes(repo, records, full=False, bar=_Bar(), pool=pool)
+        assert not db.conn.in_transaction
+        assert len(detector._pending) == 2  # not yet due: under 500 rows and 5 seconds
+        detector._maybe_commit(repo, force=True)
+        stored = db.conn.execute("SELECT COUNT(*) FROM file_hashes WHERE quick_hash IS NOT NULL").fetchone()[0]
+        assert stored == 2 and not db.conn.in_transaction
+    finally:
+        db.close()

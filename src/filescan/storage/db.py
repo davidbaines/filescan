@@ -8,7 +8,8 @@ class SQLiteDB:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(db_path))
+        # Wait up to a minute for another filescan process's write to finish.
+        self.conn = sqlite3.connect(str(db_path), timeout=60)
         self.conn.row_factory = sqlite3.Row
         try:
             try:
@@ -111,6 +112,18 @@ class SQLiteDB:
                 stage TEXT PRIMARY KEY,
                 scan_run_id INTEGER NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS review_decisions (
+                scope TEXT NOT NULL,
+                path TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                decision TEXT NOT NULL,
+                suggestion TEXT,
+                unique_bytes INTEGER NOT NULL DEFAULT 0,
+                total_bytes INTEGER NOT NULL DEFAULT 0,
+                decided_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (scope, path, kind)
             );
             """
         )

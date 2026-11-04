@@ -13,7 +13,10 @@ from filescan.storage import FileRepository, SQLiteDB
 
 
 # Hash rows are committed in batches: a crash loses at most this many hashes or
-# this many seconds of work, instead of paying for one commit per file.
+# this many seconds of work, instead of paying for one commit per file. Rows are
+# held in memory until then and written in one short transaction, so the write
+# lock is never held while a large file is being read and other filescan
+# commands are not locked out.
 _COMMIT_EVERY_ROWS = 500
 _COMMIT_EVERY_SECONDS = 5.0
 
@@ -22,16 +25,21 @@ class DuplicateDetector:
     def __init__(self, config: ScanConfig, *, rescan: bool = False) -> None:
         self.config = config
         self.rescan = rescan
-        self._uncommitted = 0
+        self._pending: list[tuple[int, bool, str]] = []  # (file id, is full hash, digest)
         self._last_commit = time.monotonic()
 
     def _maybe_commit(self, repo: FileRepository, *, force: bool = False) -> None:
-        if self._uncommitted == 0:
+        if not self._pending:
             return
-        due = self._uncommitted >= _COMMIT_EVERY_ROWS or time.monotonic() - self._last_commit >= _COMMIT_EVERY_SECONDS
+        due = len(self._pending) >= _COMMIT_EVERY_ROWS or time.monotonic() - self._last_commit >= _COMMIT_EVERY_SECONDS
         if force or due:
+            for file_id, full, digest in self._pending:
+                if full:
+                    repo.upsert_file_hash(file_id, full_hash=digest, commit=False)
+                else:
+                    repo.upsert_file_hash(file_id, quick_hash=digest, commit=False)
             repo.db.conn.commit()
-            self._uncommitted = 0
+            self._pending.clear()
             self._last_commit = time.monotonic()
 
     def _log_hash_skip(self, path: Path, exc: OSError, *, full: bool) -> None:
@@ -66,12 +74,9 @@ class DuplicateDetector:
             setattr(file_record, attr, digest)
             if file_record.id is None:
                 raise ValueError("Hashed file must have an id.")
-            if full:
-                repo.upsert_file_hash(file_record.id, full_hash=digest, commit=False)
-            else:
-                repo.upsert_file_hash(file_record.id, quick_hash=digest, commit=False)
-            self._uncommitted += 1
+            self._pending.append((file_record.id, full, digest))
             bar.update(1)
+            self._maybe_commit(repo)
         self._maybe_commit(repo)
 
     def run(self) -> list[DuplicateGroup]:
