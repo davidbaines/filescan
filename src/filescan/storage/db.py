@@ -240,6 +240,7 @@ class SQLiteDB:
             """
             CREATE INDEX IF NOT EXISTS idx_files_folder ON files(folder_id);
             CREATE INDEX IF NOT EXISTS idx_files_scan ON files(scan_run_id, is_missing);
+            CREATE INDEX IF NOT EXISTS idx_files_size ON files(size);
             CREATE INDEX IF NOT EXISTS idx_folders_parent ON folders(parent_id);
             CREATE INDEX IF NOT EXISTS idx_folders_scan ON folders(scan_run_id, is_missing);
             """

@@ -54,52 +54,43 @@ class DuplicateDetector:
             groups = repo.list_duplicate_groups()
             db.close()
             return groups
-        total_candidate_files = repo.count_active_files(min_size=self.config.duplicate_size_threshold)
-        files: list[FileRecord] = []
-        with progress_bar(desc="duplicate load files", total=total_candidate_files, unit="file") as bar:
-            for file_record in repo.iter_active_files(min_size=self.config.duplicate_size_threshold):
-                files.append(file_record)
-                bar.update(1)
-        by_size: dict[int, list[FileRecord]] = defaultdict(list)
-        with progress_bar(desc="duplicate size groups", total=len(files), unit="file") as bar:
-            for file_record in files:
-                by_size[file_record.size].append(file_record)
-                bar.update(1)
-        size_candidates = [group for group in by_size.values() if len(group) > 1]
+        # Group by size in SQL and stream one size group at a time, so memory stays
+        # flat however many files are indexed.
+        size_groups = repo.duplicate_size_groups(min_size=self.config.duplicate_size_threshold)
+        total_candidate_files = sum(count for _, count in size_groups)
+        print(f"  {len(size_groups):,} shared sizes covering {total_candidate_files:,} files")
 
-        quick_candidates: list[list[FileRecord]] = []
-        total_quick_hashes = sum(
-            1 for group in size_candidates for file_record in group if file_record.quick_hash is None
-        )
-        with progress_bar(desc="quick hash", total=total_quick_hashes, unit="file") as bar:
-            for group in size_candidates:
-                self._populate_hashes(repo, group, full=False, bar=bar)
+        confirmed_groups: list[DuplicateGroup] = []
+        with (
+            progress_bar(desc="duplicate size groups", total=total_candidate_files, unit="file") as groups_bar,
+            progress_bar(desc="quick hash", unit="file") as quick_bar,
+            progress_bar(desc="full hash", unit="file") as full_bar,
+        ):
+            for size, count in size_groups:
+                group = repo.files_of_size(size)
+                self._populate_hashes(repo, group, full=False, bar=quick_bar)
                 by_quick: dict[str, list[FileRecord]] = defaultdict(list)
                 for file_record in group:
                     if file_record.quick_hash is not None:
                         by_quick[file_record.quick_hash].append(file_record)
-                quick_candidates.extend(candidate for candidate in by_quick.values() if len(candidate) > 1)
-
-        confirmed_groups: list[DuplicateGroup] = []
-        total_full_hashes = sum(
-            1 for group in quick_candidates for file_record in group if file_record.full_hash is None
-        )
-        with progress_bar(desc="full hash", total=total_full_hashes, unit="file") as bar:
-            for group in quick_candidates:
-                self._populate_hashes(repo, group, full=True, bar=bar)
-                by_full: dict[str, list[FileRecord]] = defaultdict(list)
-                for file_record in group:
-                    if file_record.full_hash is not None:
-                        by_full[file_record.full_hash].append(file_record)
-                for digest, matches in by_full.items():
-                    if len(matches) > 1:
-                        confirmed_groups.append(
-                            DuplicateGroup(
-                                full_hash=digest,
-                                size_bytes=matches[0].size,
-                                files=tuple(sorted(matches, key=lambda item: str(item.path))),
+                for candidate in by_quick.values():
+                    if len(candidate) < 2:
+                        continue
+                    self._populate_hashes(repo, candidate, full=True, bar=full_bar)
+                    by_full: dict[str, list[FileRecord]] = defaultdict(list)
+                    for file_record in candidate:
+                        if file_record.full_hash is not None:
+                            by_full[file_record.full_hash].append(file_record)
+                    for digest, matches in by_full.items():
+                        if len(matches) > 1:
+                            confirmed_groups.append(
+                                DuplicateGroup(
+                                    full_hash=digest,
+                                    size_bytes=matches[0].size,
+                                    files=tuple(sorted(matches, key=lambda item: str(item.path))),
+                                )
                             )
-                        )
+                groups_bar.update(count)
 
         repo.replace_duplicate_groups(confirmed_groups)
         repo.set_stage_scan_run_id("duplicates", latest_scan_run_id)

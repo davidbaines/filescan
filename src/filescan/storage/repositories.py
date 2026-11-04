@@ -241,6 +241,42 @@ class FileRepository:
         for row in rows:
             yield self._folder_from_row(row)
 
+    def duplicate_size_groups(self, *, min_size: int = 1) -> list[tuple[int, int]]:
+        """Return (size, file_count) for every size shared by two or more active files."""
+        rows = self.db.conn.execute(
+            """
+            SELECT files.size AS size, COUNT(*) AS file_count
+            FROM files
+            JOIN folders ON folders.id = files.folder_id
+            WHERE files.is_missing = 0
+              AND folders.is_missing = 0
+              AND files.size >= ?
+            GROUP BY files.size
+            HAVING COUNT(*) > 1
+            ORDER BY files.size
+            """,
+            (min_size,),
+        )
+        return [(int(row["size"]), int(row["file_count"])) for row in rows]
+
+    def files_of_size(self, size: int) -> list[FileRecord]:
+        rows = self.db.conn.execute(
+            """
+            SELECT files.id, files.folder_id, folders.path AS folder_path, files.filename, files.path, files.size,
+                   files.mtime, files.ctime, files.scan_run_id, files.is_missing,
+                   file_hashes.quick_hash, file_hashes.full_hash
+            FROM files
+            JOIN folders ON folders.id = files.folder_id
+            LEFT JOIN file_hashes ON file_hashes.file_id = files.id
+            WHERE files.size = ?
+              AND files.is_missing = 0
+              AND folders.is_missing = 0
+            ORDER BY files.path
+            """,
+            (size,),
+        )
+        return [self._file_from_row(row) for row in rows]
+
     def list_active_files(self, *, min_size: int = 0) -> list[FileRecord]:
         return list(self.iter_active_files(min_size=min_size))
 
