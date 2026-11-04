@@ -142,3 +142,52 @@ def test_duplicate_detector_streams_size_groups_without_loading_all_files(tmp_pa
     assert quick == 3  # the three 1-byte files; the unique-size file is never read
     assert full == 2  # the quick hash already separates "y" from the two "x" files
     db.close()
+
+
+def test_duplicate_detector_batches_hash_commits(tmp_path: Path, make_repo, monkeypatch) -> None:
+    from filescan.storage.db import SQLiteDB
+
+    root = tmp_path / "root"
+    spec = {}
+    for i in range(40):  # 40 size groups of two identical files each
+        content = bytes([65 + (i % 26)]) * (i + 1)
+        spec[f"a/{i}.bin"] = content
+        spec[f"b/{i}.bin"] = content
+    created = build_tree(root, spec)
+    db, repo = make_repo(tmp_path / "duplicates.db")
+    index_paths(repo, root, created)
+    db.close()
+
+    commits = {"count": 0}
+    original_init = SQLiteDB.__init__
+
+    class CountingConnection:
+        def __init__(self, conn):
+            self._conn = conn
+
+        def commit(self):
+            commits["count"] += 1
+            return self._conn.commit()
+
+        def __getattr__(self, name):
+            return getattr(self._conn, name)
+
+    def counting_init(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        self.conn = CountingConnection(self.conn)
+
+    monkeypatch.setattr(SQLiteDB, "__init__", counting_init)
+    detector = DuplicateDetector(
+        ScanConfig(
+            roots=[root],
+            filescan_folder=tmp_path / "filescan",
+            database_path=tmp_path / "duplicates.db",
+            report_path=tmp_path / "report.xlsx",
+            duplicate_size_threshold=1,
+        )
+    )
+
+    groups = detector.run()
+
+    assert len(groups) == 40
+    assert commits["count"] < 20  # 160 hashes written; one commit each would be 160+

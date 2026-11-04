@@ -329,7 +329,9 @@ class FileRepository:
         for row in rows:
             yield self._file_from_row(row)
 
-    def upsert_file_hash(self, file_id: int, *, quick_hash: str | None = None, full_hash: str | None = None) -> None:
+    def upsert_file_hash(
+        self, file_id: int, *, quick_hash: str | None = None, full_hash: str | None = None, commit: bool = True
+    ) -> None:
         self.db.conn.execute(
             """
             INSERT INTO file_hashes (file_id, quick_hash, full_hash, updated_at)
@@ -341,7 +343,8 @@ class FileRepository:
             """,
             (file_id, quick_hash, full_hash),
         )
-        self.db.conn.commit()
+        if commit:
+            self.db.conn.commit()
 
     def replace_duplicate_groups(self, groups: list[DuplicateGroup]) -> None:
         self.db.conn.execute("DELETE FROM duplicate_group_members")

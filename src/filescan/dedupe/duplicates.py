@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -11,39 +12,59 @@ from filescan.progress import progress_bar
 from filescan.storage import FileRepository, SQLiteDB
 
 
+# Hash rows are committed in batches: a crash loses at most this many hashes or
+# this many seconds of work, instead of paying for one commit per file.
+_COMMIT_EVERY_ROWS = 500
+_COMMIT_EVERY_SECONDS = 5.0
+
+
 class DuplicateDetector:
     def __init__(self, config: ScanConfig, *, rescan: bool = False) -> None:
         self.config = config
         self.rescan = rescan
+        self._uncommitted = 0
+        self._last_commit = time.monotonic()
+
+    def _maybe_commit(self, repo: FileRepository, *, force: bool = False) -> None:
+        if self._uncommitted == 0:
+            return
+        due = self._uncommitted >= _COMMIT_EVERY_ROWS or time.monotonic() - self._last_commit >= _COMMIT_EVERY_SECONDS
+        if force or due:
+            repo.db.conn.commit()
+            self._uncommitted = 0
+            self._last_commit = time.monotonic()
 
     def _log_hash_skip(self, path: Path, exc: OSError, *, full: bool) -> None:
         hash_name = "full" if full else "quick"
         print(f"Skipping {hash_name} hash for {path}: {exc}")
 
-    def _populate_hashes(self, repo: FileRepository, files: list[FileRecord], *, full: bool, bar) -> None:
+    def _populate_hashes(
+        self, repo: FileRepository, files: list[FileRecord], *, full: bool, bar, pool: ThreadPoolExecutor
+    ) -> None:
         attr = "full_hash" if full else "quick_hash"
         hasher = full_hash if full else quick_hash
         pending = [file_record for file_record in files if getattr(file_record, attr) is None]
         if not pending:
             return
-        with ThreadPoolExecutor(max_workers=self.config.worker_count) as pool:
-            futures = {pool.submit(hasher, file_record.path): file_record for file_record in pending}
-            for future in as_completed(futures):
-                file_record = futures[future]
-                try:
-                    digest = future.result()
-                except OSError as exc:
-                    self._log_hash_skip(file_record.path, exc, full=full)
-                    bar.update(1)
-                    continue
-                setattr(file_record, attr, digest)
-                if file_record.id is None:
-                    raise ValueError("Hashed file must have an id.")
-                if full:
-                    repo.upsert_file_hash(file_record.id, full_hash=digest)
-                else:
-                    repo.upsert_file_hash(file_record.id, quick_hash=digest)
+        futures = {pool.submit(hasher, file_record.path): file_record for file_record in pending}
+        for future in as_completed(futures):
+            file_record = futures[future]
+            try:
+                digest = future.result()
+            except OSError as exc:
+                self._log_hash_skip(file_record.path, exc, full=full)
                 bar.update(1)
+                continue
+            setattr(file_record, attr, digest)
+            if file_record.id is None:
+                raise ValueError("Hashed file must have an id.")
+            if full:
+                repo.upsert_file_hash(file_record.id, full_hash=digest, commit=False)
+            else:
+                repo.upsert_file_hash(file_record.id, quick_hash=digest, commit=False)
+            self._uncommitted += 1
+            bar.update(1)
+        self._maybe_commit(repo)
 
     def run(self) -> list[DuplicateGroup]:
         db = SQLiteDB(self.config.database_path)
@@ -65,10 +86,11 @@ class DuplicateDetector:
             progress_bar(desc="duplicate size groups", total=total_candidate_files, unit="file") as groups_bar,
             progress_bar(desc="quick hash", unit="file") as quick_bar,
             progress_bar(desc="full hash", unit="file") as full_bar,
+            ThreadPoolExecutor(max_workers=self.config.worker_count) as pool,
         ):
             for size, count in size_groups:
                 group = repo.files_of_size(size)
-                self._populate_hashes(repo, group, full=False, bar=quick_bar)
+                self._populate_hashes(repo, group, full=False, bar=quick_bar, pool=pool)
                 by_quick: dict[str, list[FileRecord]] = defaultdict(list)
                 for file_record in group:
                     if file_record.quick_hash is not None:
@@ -76,7 +98,7 @@ class DuplicateDetector:
                 for candidate in by_quick.values():
                     if len(candidate) < 2:
                         continue
-                    self._populate_hashes(repo, candidate, full=True, bar=full_bar)
+                    self._populate_hashes(repo, candidate, full=True, bar=full_bar, pool=pool)
                     by_full: dict[str, list[FileRecord]] = defaultdict(list)
                     for file_record in candidate:
                         if file_record.full_hash is not None:
@@ -92,6 +114,7 @@ class DuplicateDetector:
                             )
                 groups_bar.update(count)
 
+        self._maybe_commit(repo, force=True)
         repo.replace_duplicate_groups(confirmed_groups)
         repo.set_stage_scan_run_id("duplicates", latest_scan_run_id)
         db.close()
