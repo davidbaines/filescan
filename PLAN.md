@@ -109,6 +109,23 @@ Files are scattered across the PC (C: user folders, D:, E:, F:), the LaCie J: an
   - Each root gets `location: pc | server` and `role: source | master | excluded`.
   - Anchored `exclude` patterns and a `pinned` list are added.
   - New command `exclusions-report` shows the bytes each pattern catches.
+  - [ ] **Tag excluded data; don't skip it at scan time.**
+    - Inventory everything under a root and store the matching exclusion rule on the folder. Apply exclusions when querying and planning, so `exclusions-report` is a query.
+    - Keep skipping at scan time only for data that never leaves the PC, such as AppData.
+    - Otherwise excluded data never enters the database: `verify-coverage` would pass, and wiping disk3 and disk1 would destroy it unreviewed.
+    - The gate before any wipe reports the excluded bytes on that disk and needs an explicit sign-off.
+  - [ ] **Remove `.git` from `exclude_folders`,** in the code default, in the test fixture and in `C:\filescan\config.yml`. Repositories that exist only on the server must keep their history.
+  - [ ] **A root's location decides which stage handles it.**
+    - The scanner never walks `location: server` roots; `import-server` lists them instead.
+    - The duplicate detector never hashes server files; `fsagent hash` does.
+    - Marking missing files for server roots happens during the import.
+- [ ] **Cloud placeholders.**
+  - iCloudDrive has 23 placeholder files and OneDrive 16 (`RECALL_ON_DATA_ACCESS`), and reading one downloads it.
+  - Store `st_file_attributes` in the scanner, which costs nothing on Windows, and never hash files flagged `RECALL_ON_DATA_ACCESS` (0x400000), `RECALL_ON_OPEN` (0x40000) or `OFFLINE` (0x1000).
+  - Report them separately. Don't skip every reparse point, because files OneDrive keeps on the device are reparse points too.
+- [ ] **Batch the hash commits.** `upsert_file_hash` commits after every file. Commit every few hundred files or every few seconds instead, so a crash still loses at most the current batch.
+- [x] Python is pinned to 3.12 or later in `pyproject.toml`, so `DirEntry.is_junction()` is available.
+- [ ] **The fixture test fails on `main` too.** `test_report_fixture_contents.py` expects a `merge_folder` row. Find out with `git bisect` in a separate worktree whether the cluster work changed this deliberately (update the test) or broke it (fix the code). Make the test write its report to a temporary copy, so it stops dirtying the tracked fixture.
 - [ ] **[GATE]** `pytest` passes.
 
 ### Phase 2: server setup and a fresh inventory
@@ -123,6 +140,7 @@ Files are scattered across the PC (C: user folders, D:, E:, F:), the LaCie J: an
   - master: disk2.
 - [ ] `filescan scan --rescan` the PC roots.
 - [ ] `filescan import-server` (runs `fsagent list`).
+  - Convert the server's `mtime_ns` to the stored float in one shared function. The stale-hash check compares mtimes exactly, so any drift would clear every server hash on each re-import.
 
 ### Phase 3: task 2, which files the server lacks
 
