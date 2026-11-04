@@ -31,6 +31,7 @@ filescan --config config.yml largest
 filescan --config config.yml merge-review
 filescan --config config.yml import-server       # list server roots with fsagent over SSH
 filescan --config config.yml exclusions-report   # CSV of what each exclusion rule leaves out
+filescan --config config.yml compare             # PC files with no identical copy on the server
 
 poetry run pytest tests                          # run all tests
 poetry run pytest tests/unit/test_config.py      # one file

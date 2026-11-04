@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 from filescan.cleanup.waste_detector import find_waste_candidates, print_waste_report, write_waste_shortcuts
+from filescan.compare import run_compare
 from filescan.config import load_config
 from filescan.dedupe.duplicates import run_duplicates
 from filescan.execution.mover import run_execution
@@ -57,6 +58,10 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "import-server",
         help="List the server roots with fsagent over SSH and load them into the database.",
+    )
+    subparsers.add_parser(
+        "compare",
+        help="List PC files with no identical copy on the server (hashes only files whose size matches).",
     )
     subparsers.add_parser(
         "exclusions-report",
@@ -203,6 +208,9 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "import-server":
         _stage_start("import-server")
         run_import_server(args.config)
+    elif args.command == "compare":
+        _stage_start("compare")
+        run_compare(args.config)
     elif args.command == "exclusions-report":
         _stage_start("exclusions-report")
         print(run_exclusions_report(args.config))

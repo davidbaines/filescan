@@ -55,8 +55,10 @@ def test_hash_appends_results_and_resumes(tmp_path: Path) -> None:
     out = tmp_path / "hashes.jsonl"
     _write_jsonl(paths, [str(root / "a.bin"), str(root / "b.bin"), str(root / "missing.bin")])
     # Simulate an interrupted earlier run: a.bin finished, then a torn line.
+    a_mtime = (root / "a.bin").stat().st_mtime_ns
     out.write_text(
-        json.dumps({"path": str(root / "a.bin"), "size": 4, "mtime_ns": 0, "xxh128": "earlier"}) + "\n{\"path\": \"tor",
+        json.dumps({"path": str(root / "a.bin"), "size": 4, "mtime_ns": a_mtime, "xxh128": "earlier"})
+        + "\n{\"path\": \"tor",
         encoding="utf-8",
     )
 
@@ -130,3 +132,17 @@ def test_copy_dry_run_writes_nothing(tmp_path: Path) -> None:
 
     assert not (tmp_path / "out").exists()
     assert _lines(log)[0]["status"] == "would_copy"
+
+
+def test_hash_rehashes_files_changed_since_earlier_result(tmp_path: Path) -> None:
+    target = tmp_path / "c.bin"
+    target.write_bytes(b"new content")
+    paths = tmp_path / "paths.jsonl"
+    out = tmp_path / "hashes.jsonl"
+    _write_jsonl(paths, [str(target)])
+    _write_jsonl(out, [{"path": str(target), "size": 3, "mtime_ns": 1, "xxh128": "stale"}])
+
+    fsagent.cmd_hash(str(paths), str(out))
+
+    latest = _lines(out)[-1]
+    assert latest["xxh128"] == full_hash(target)

@@ -146,12 +146,13 @@ Files are scattered across the PC (C: user folders, D:, E:, F:), the LaCie J: an
 
 ### Phase 3: task 2, which files the server lacks
 
-- [ ] Prune by size in SQL: only sizes found in both the source and the server groups become candidates.
-- [ ] Hash the PC candidates locally, and the server candidates with `fsagent hash`, then import the results.
+- [x] Prune by size: only sizes found on both the PC and the server become candidates (`filescan compare`).
+- [x] Hash the PC candidates locally, and the server candidates with `fsagent hash` (`inventory/server_hash.py`), then import the results. A server hash is stored only if the file's size and mtime still match the inventory, and `fsagent hash` re-hashes files changed since an earlier result.
+  - [ ] Run it for real once the inventory is complete.
 - [ ] **Let duplicate groups include server files.** Today the detector leaves server files out of grouping entirely, not just out of hashing. Similarity (55% weight on shared duplicates) and clusters would then never link a PC tree to a server tree, which breaks Phase 5.
   - Rule: never compute a hash for a server file, but do group server files that already have a full hash from `fsagent`.
   - `fsagent` supplies only full hashes, so a size group that includes server files skips the quick-hash prefilter for them.
-- [ ] New command `filescan compare`: an XLSX of the source files with no copy of the same content on the server, with totals per top folder.
+- [x] New command `filescan compare`. It writes `compare_missing_files.csv` (status, exclusion rule, size, path) and `compare_summary.csv` (totals per top folder, with excluded bytes split out) rather than XLSX, because the file list may run to millions of rows. Statuses are `no-size-match`, `content-differs`, `not-hashed` and `cloud-placeholder`.
 - [ ] Run `fsagent hash` on server-only size groups, about 1.8 TB, overnight.
 
 ### Phase 4: unwanted data, rules layer

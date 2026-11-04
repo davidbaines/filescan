@@ -186,8 +186,23 @@ def cmd_list(root: str, exclude_dirs: set[str], skip: set[str], out: IO[str]) ->
 
 
 def cmd_hash(input_path: str, output_path: str) -> int:
-    done = {rec["path"] for rec in _read_jsonl(output_path) if isinstance(rec, dict) and "path" in rec}
-    todo = [p for p in _read_jsonl(input_path) if isinstance(p, str) and p not in done]
+    # Only a successful result for the file as it is now counts as done; errors
+    # are retried and files changed since their result are hashed again.
+    done: dict[str, tuple[int, int]] = {}
+    for rec in _read_jsonl(output_path):
+        if isinstance(rec, dict) and "xxh128" in rec:
+            done[rec["path"]] = (rec.get("size"), rec.get("mtime_ns"))
+
+    def is_done(path: str) -> bool:
+        if path not in done:
+            return False
+        try:
+            st = os.stat(path, follow_symlinks=False)
+        except OSError:
+            return False
+        return done[path] == (st.st_size, st.st_mtime_ns)
+
+    todo = [p for p in _read_jsonl(input_path) if isinstance(p, str) and not is_done(p)]
     print(f"[hash] {len(done):,} already done, {len(todo):,} to hash", file=sys.stderr, flush=True)
     progress = _Progress("hash", total=len(todo))
     with _open_append(output_path) as out:
