@@ -176,6 +176,17 @@ Files are scattered across the PC (C: user folders, D:, E:, F:), the LaCie J: an
 - [x] **[USER]** Decide whether older File History versions can go. Decided 5 November: yes, keep only the newest version of each file. The rule `file-history-old-versions` is now a delete candidate (40,541 files, 1,455 GB distinct); nothing is deleted until a separate cleanup command runs.
 - [ ] **[USER]** Review the rest of the unwanted-data report (`unwanted_report.csv`): disk images, VM disks and installers.
 - [ ] **[GATE]** Checkpoint: measure the unique set against disk2 (overflowing to disk1) and against the PC's F:, E: and D:. Then decide whether an AI layer is needed. `filescan measure` does the measuring; see the figures below.
+  - Final figures, 5 November, after `duplicates` hashed every PC size group and with the File History decision applied (distinct content):
+
+    | | Total | PC only | Server only | Both |
+    |---|---|---|---|---|
+    | Organised set, as it stands | 3,180 GB | 1,014 GB | 2,089 GB | 76 GB |
+    | Without delete-candidate matches | 1,701 GB | 996 GB | 629 GB | 76 GB |
+    | Without any unwanted-data match | 1,590 GB | 951 GB | 564 GB | 75 GB |
+
+  - Excluded areas (the Trash, Acronis, old OS folders, corpora) are not in these figures except folders marked keep in a review; none are marked yet.
+  - Against the targets: disk2 has 2,952 GB free, so 1.7 TB fits with room for kept Trash folders. On the PC, 629 GB of server-only data must come over; F: has 962 GB free before any cleanup.
+  - Conclusion: the rules alone make the set fit, so no AI layer is needed for space. It could still help with sorting `Unsorted`.
 
 ### Phase 5: build the server master on disk2
 
