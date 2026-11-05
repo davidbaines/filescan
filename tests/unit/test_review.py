@@ -283,3 +283,39 @@ def test_copy_matched_by_an_unwanted_rule_does_not_count_as_kept(tmp_path):
         assert all(u.suggestion is None or "kept location" not in u.suggestion.reason for u in session.units)
     finally:
         db.close()
+
+
+def test_decisions_survive_a_locked_database(tmp_path):
+    import sqlite3
+    import time
+
+    files = {T + rf"\d{i}\f.bin": (10 + i, None) for i in range(3)}
+    session, db = _session(tmp_path, files, split_gb=1e-8)
+    by_path = {u.path: u for u in session.units}
+    blocker = sqlite3.connect(str(session.config.database_path))
+    try:
+        blocker.execute("BEGIN IMMEDIATE")  # another command holding the write lock
+        start = time.monotonic()
+        session.decide(by_path[T + r"\d1"], TRASH)
+        session.decide(by_path[T + r"\d2"], KEEP)
+        session.clear(by_path[T + r"\d2"])
+        assert time.monotonic() - start < 5          # the screen does not freeze
+        assert len(session.pending) == 3
+        assert session.journal_path.exists()
+        assert session.stored_decisions() == {((T + r"\d1").lower(), TREE): TRASH}
+        db.close()
+
+        # The program stops while the lock is held; the journal carries the decisions over.
+        blocker.rollback()
+        db = SQLiteDB(session.config.database_path)
+        again = ReviewSession(db, session.config, "server-trash", unwanted_rules=[], split_gb=1e-8)
+        again.load()
+        decisions = {u.path: u.decision for u in again.units}
+        assert decisions[T + r"\d1"] == TRASH
+        assert decisions[T + r"\d2"] is None
+        assert again.pending == [] and not again.journal_path.exists()
+        rows = db.conn.execute("SELECT path, decision FROM review_decisions").fetchall()
+        assert [(r["path"], r["decision"]) for r in rows] == [(T + r"\d1", TRASH)]
+    finally:
+        blocker.close()
+        db.close()

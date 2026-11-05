@@ -123,6 +123,11 @@ class ReviewApp(App[None]):
     def on_mount(self) -> None:
         self.sub_title = f"scope: {self.session.scope}. Decisions are recorded only; nothing is deleted here."
         self._rebuild(0)
+        self.set_interval(5, self._save_pending)
+
+    def _save_pending(self) -> None:
+        if self.session.pending and self.session.save():
+            self._refresh()
 
     # ------------------------------------------------------------ helpers
 
@@ -152,6 +157,8 @@ class ReviewApp(App[None]):
         self.query_one("#summary", Static).update(
             f"{t['decided']:,}/{t['units']:,} decided   unique: {gb(t['unique'])}   "
             f"keep {gb(t['keep'])}   trash {gb(t['trash'])}   undecided {gb(t['undecided'])}"
+            + (f"   [b]{len(self.session.pending)} waiting for the database (safe in the journal)[/]"
+               if self.session.pending else "")
         )
 
     def _label_width(self) -> int:
@@ -228,7 +235,8 @@ class ReviewApp(App[None]):
             return
         self._accept_all_armed = False
         for unit in todo:
-            self.session.decide(unit, unit.suggestion.decision)
+            self.session.decide(unit, unit.suggestion.decision, save=False)
+        self.session.save()
         self._rebuild(self.query_one("#units", ListView).index or 0)
         self.notify(f"Accepted {len(todo)} suggestions. Press u on any of them to undo it.")
 
@@ -289,6 +297,9 @@ def run_review(config_path, scope: str | None, *, split_gb: float = 5.0) -> None
         ReviewApp(session).run()
         out = session.export_csv()
         t = session.totals()
-        print(f"{t['decided']:,} of {t['units']:,} folders decided. Decisions saved in the database and in {out}")
+        if session.pending and not session.save(wait_ms=30_000):
+            print(f"The database is busy, so {len(session.pending):,} decisions wait in {session.journal_path}; "
+                  "they are saved to the database the next time you run the review.")
+        print(f"{t['decided']:,} of {t['units']:,} folders decided. Decisions are also in {out}")
     finally:
         db.close()

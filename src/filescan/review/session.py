@@ -2,11 +2,22 @@
 
 Every decision is written to the `review_decisions` table as it is made, so a
 session can stop at any point and resume where it left off.
+
+Another filescan command may hold the database's write lock for minutes (for
+example `duplicates` writing its groups). A decision is therefore first
+appended to a journal file, `review_<scope>.journal.jsonl` beside the reports,
+and then written to the database with a short wait. If the database is busy the
+decision stays in the journal and is written later: on the next decision, every
+few seconds while the screen is open, on quit, or when the session next loads.
+The journal is emptied once its decisions are in the database.
 """
 
 from __future__ import annotations
 
 import csv
+import json
+import os
+import sqlite3
 from pathlib import Path, PureWindowsPath
 
 from filescan.cleanup.unwanted import UnwantedRule, load_unwanted_rules
@@ -32,6 +43,10 @@ from filescan.storage import SQLiteDB
 
 DECISIONS = (KEEP, TRASH)
 
+# How long a decision waits for another command's write lock before it is left
+# in the journal, so the screen never freezes.
+_SHORT_WAIT_MS = 500
+
 
 class ReviewSession:
     def __init__(self, db: SQLiteDB, config: ScanConfig, scope: str, *, split_gb: float = 5.0,
@@ -45,6 +60,8 @@ class ReviewSession:
         self.files_by_root: dict = {}
         self.units: list[Unit] = []
         self.user_splits: set[str] = set()
+        self.journal_path = config.filescan_folder / f"review_{scope}.journal.jsonl"
+        self.pending: list[dict] = self._read_journal()
 
     # ------------------------------------------------------------ loading
 
@@ -52,6 +69,7 @@ class ReviewSession:
         print(f"Finding the folders in scope {self.scope!r}...")
         folder_rules = classify_folders(self.db, self.config)
         self.roots = scope_roots(self.db, self.config, self.scope, folder_rules)
+        self.save()  # decisions left in the journal last time
         self.files_by_root = load_files(self.db, self.roots)
         all_files = [f for files in self.files_by_root.values() for f in files]
         print(f"{len(self.roots):,} folders, {len(all_files):,} files. Looking for copies in kept locations...")
@@ -101,35 +119,92 @@ class ReviewSession:
         rows = self.db.conn.execute(
             "SELECT path, kind, decision FROM review_decisions WHERE scope = ?", (self.scope,)
         )
-        return {(r["path"].lower(), r["kind"]): r["decision"] for r in rows}
+        stored = {(r["path"].lower(), r["kind"]): r["decision"] for r in rows}
+        for entry in self.pending:  # decisions not yet in the database, oldest first
+            key = (entry["path"].lower(), entry["kind"])
+            if entry["decision"] is None:
+                stored.pop(key, None)
+            else:
+                stored[key] = entry["decision"]
+        return stored
 
-    def decide(self, unit: Unit, decision: str) -> None:
+    def decide(self, unit: Unit, decision: str, *, save: bool = True) -> None:
+        """Record a decision. With save=False it is only journalled; call save() afterwards."""
         if decision not in DECISIONS:
             raise ValueError(decision)
-        self.db.conn.execute(
-            """
-            INSERT INTO review_decisions (scope, path, kind, decision, suggestion, unique_bytes, total_bytes)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (scope, path, kind) DO UPDATE SET
-                decision = excluded.decision, suggestion = excluded.suggestion,
-                unique_bytes = excluded.unique_bytes, total_bytes = excluded.total_bytes,
-                decided_at = CURRENT_TIMESTAMP
-            """,
-            (self.scope, unit.path, unit.kind, decision,
-             unit.suggestion.decision if unit.suggestion else None, unit.unique_bytes, unit.total_bytes),
-        )
-        self.db.conn.commit()
+        self._record(unit, decision, save=save)
         unit.decision = decision
         recompute_unique(self.units)
 
     def clear(self, unit: Unit) -> None:
-        self.db.conn.execute(
-            "DELETE FROM review_decisions WHERE scope = ? AND path = ? AND kind = ?",
-            (self.scope, unit.path, unit.kind),
-        )
-        self.db.conn.commit()
+        self._record(unit, None, save=True)
         unit.decision = None
         recompute_unique(self.units)
+
+    # ------------------------------------------------------------ journal
+
+    def _read_journal(self) -> list[dict]:
+        try:
+            lines = self.journal_path.read_text(encoding="utf-8").splitlines()
+        except FileNotFoundError:
+            return []
+        entries = []
+        for line in lines:
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue  # a line cut short by a crash; every earlier line is intact
+        return entries
+
+    def _record(self, unit: Unit, decision: str | None, *, save: bool) -> None:
+        entry = {"path": unit.path, "kind": unit.kind, "decision": decision,
+                 "suggestion": unit.suggestion.decision if unit.suggestion else None,
+                 "unique_bytes": unit.unique_bytes, "total_bytes": unit.total_bytes}
+        self.journal_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.journal_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        self.pending.append(entry)
+        if save:
+            self.save()
+
+    def save(self, *, wait_ms: int = _SHORT_WAIT_MS) -> bool:
+        """Write journalled decisions to the database. False if it is still locked."""
+        if not self.pending:
+            return True
+        conn = self.db.conn
+        conn.execute(f"PRAGMA busy_timeout = {int(wait_ms)}")
+        try:
+            for e in self.pending:
+                if e["decision"] is None:
+                    conn.execute("DELETE FROM review_decisions WHERE scope = ? AND path = ? AND kind = ?",
+                                 (self.scope, e["path"], e["kind"]))
+                else:
+                    conn.execute(
+                        """
+                        INSERT INTO review_decisions
+                            (scope, path, kind, decision, suggestion, unique_bytes, total_bytes)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT (scope, path, kind) DO UPDATE SET
+                            decision = excluded.decision, suggestion = excluded.suggestion,
+                            unique_bytes = excluded.unique_bytes, total_bytes = excluded.total_bytes,
+                            decided_at = CURRENT_TIMESTAMP
+                        """,
+                        (self.scope, e["path"], e["kind"], e["decision"], e["suggestion"],
+                         e["unique_bytes"], e["total_bytes"]),
+                    )
+            conn.commit()
+        except sqlite3.OperationalError as exc:
+            conn.rollback()
+            if "locked" not in str(exc) and "busy" not in str(exc):
+                raise
+            return False
+        finally:
+            conn.execute("PRAGMA busy_timeout = 60000")
+        self.pending.clear()
+        self.journal_path.unlink(missing_ok=True)
+        return True
 
     def split(self, unit: Unit) -> list[Unit]:
         """Replace a tree unit by its children. Returns the new units, or [] if it cannot be split."""
