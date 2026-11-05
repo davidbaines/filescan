@@ -173,7 +173,8 @@ Files are scattered across the PC (C: user folders, D:, E:, F:), the LaCie J: an
 - [x] `server-trash` added to the exclusions in `C:\filescan\v2\config.yml` (first in the list, so the whole Trash is one review scope). The previous config is `config.yml.bak-20261104`.
 - [ ] **[USER]** Review the Trash: `filescan --config C:\filescan\v2\config.yml review server-trash`. 235 GB is unique, in 595 folders; 67 folders (64 GB) carry a "trash" suggestion from the old-OS and cache rules. A copy counts as kept only outside every delete-candidate exclusion and every unwanted-data match.
 - [ ] **[USER]** Review the deletion candidates among the excluded data on the PC: the same command with `acronis`, `public-corpora`, `old-os-root`, `old-os-in-backups` or `app-caches`.
-- [ ] **[USER]** Review the unwanted-data report, starting with the File History versions. Decide whether older versions can go (the plan chose a mirror with no versions).
+- [x] **[USER]** Decide whether older File History versions can go. Decided 5 November: yes, keep only the newest version of each file. The rule `file-history-old-versions` is now a delete candidate (40,541 files, 1,455 GB distinct); nothing is deleted until a separate cleanup command runs.
+- [ ] **[USER]** Review the rest of the unwanted-data report (`unwanted_report.csv`): disk images, VM disks and installers.
 - [ ] **[GATE]** Checkpoint: measure the unique set against disk2 (overflowing to disk1) and against the PC's F:, E: and D:. Then decide whether an AI layer is needed. `filescan measure` does the measuring; see the figures below.
 
 ### Phase 5: build the server master on disk2

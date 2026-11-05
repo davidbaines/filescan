@@ -64,7 +64,7 @@ rules:
     match: version
     pattern: ' \((\d{4}_\d\d_\d\d \d\d_\d\d_\d\d) UTC\)'
     category: versions
-    disposition: review
+    disposition: delete-candidate
     reason: Older Windows File History versions; the newest version of each file is kept
 
   # ------------------------------------------------------------ files
