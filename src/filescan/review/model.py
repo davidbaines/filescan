@@ -5,8 +5,10 @@ Its files are grouped into review units: whole folder trees, split into their
 children while a tree holds more unique data than one decision should cover.
 
 A file is *unique* when no copy of its content survives in a kept location.
-A copy counts only if it lies outside every delete-candidate exclusion, so a
-copy in another area that may itself be deleted does not make a file safe.
+A copy counts only if it lies outside every delete-candidate exclusion and is
+not matched by an unwanted-data rule (unwanted_matches, from
+`filescan unwanted-report`), so a copy that may itself be deleted, such as an
+older File History version or a Recycle Bin file, does not make a file safe.
 Files without a full hash count as unique, which errs on the side of keeping.
 Choosing to keep a unit makes its content kept, so identical files in other
 units of the same scope stop counting as unique.
@@ -160,7 +162,7 @@ def load_files(db: SQLiteDB, roots: Iterable[str]) -> dict[str, list[ReviewFile]
 
 def kept_hashes(db: SQLiteDB, config: ScanConfig, hashes: set[str],
                 folder_rules: dict[int, ExclusionRule] | None = None) -> set[str]:
-    """The subset of `hashes` with at least one copy outside every delete-candidate exclusion."""
+    """The subset of `hashes` with a copy outside every delete-candidate exclusion and every unwanted match."""
     if not hashes:
         return set()
     if folder_rules is None:
@@ -176,7 +178,8 @@ def kept_hashes(db: SQLiteDB, config: ScanConfig, hashes: set[str],
         JOIN file_hashes h ON h.full_hash = t.h
         JOIN files f ON f.id = h.file_id
         JOIN folders fo ON fo.id = f.folder_id
-        WHERE f.is_missing = 0 AND fo.is_missing = 0
+        LEFT JOIN unwanted_matches u ON u.file_id = f.id
+        WHERE f.is_missing = 0 AND fo.is_missing = 0 AND u.file_id IS NULL
         """
     )
     for full_hash, folder_id in rows:

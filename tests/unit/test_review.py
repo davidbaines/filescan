@@ -261,3 +261,25 @@ def test_short_path_keeps_drive_and_end():
     long = r"\\192.168.1.133\disk3\.Trash-1000\files\E6510-first-disk\backup.0\kdrive\Users\David\VirtualBox VMs\Win7"
     shown = short_path(long, width=30)
     assert shown.startswith("disk3\\\u2026\\") and shown.endswith(r"VirtualBox VMs\Win7")
+
+
+def test_copy_matched_by_an_unwanted_rule_does_not_count_as_kept(tmp_path):
+    config = _config(tmp_path)
+    db = SQLiteDB(config.database_path)
+    _add(FileRepository(db), {
+        T + r"\a\mail.mbox": (100, "h-mail"),
+        T + r"\a\doc.txt": (50, "h-doc"),
+        r"C:\pc\Backup\mail (2017_02_21 10_00_00 UTC).mbox": (100, "h-mail"),   # an older version
+        r"C:\pc\Docs\doc.txt": (50, "h-doc"),
+    })
+    old = db.conn.execute("SELECT id FROM files WHERE path LIKE '%2017_02_21%'").fetchone()["id"]
+    db.conn.execute("INSERT INTO unwanted_matches VALUES (?, 'file-history-old-versions', 'review')", (old,))
+    db.conn.commit()
+    session = ReviewSession(db, config, "server-trash", unwanted_rules=[])
+    session.load()
+    try:
+        unique = {Path(f.path).name: f.unique for f in session.files_by_root[session.roots[0]]}
+        assert unique == {"mail.mbox": True, "doc.txt": False}
+        assert all(u.suggestion is None or "kept location" not in u.suggestion.reason for u in session.units)
+    finally:
+        db.close()

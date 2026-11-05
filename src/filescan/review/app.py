@@ -13,10 +13,10 @@ from pathlib import PureWindowsPath
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Grid, Horizontal, Vertical
 from textual.widgets import Button, Footer, Header, Label, ListItem, ListView, Static
 
-from filescan.review.model import FILES, KEEP, TRASH, Unit
+from filescan.review.model import FILES, KEEP, TRASH, Unit, short_path
 from filescan.review.session import ReviewSession
 
 
@@ -31,11 +31,16 @@ def gb(n: int) -> str:
 _MARK = {KEEP: "[green]KEEP [/]", TRASH: "[red]TRASH[/]", None: "[dim]  ·  [/]"}
 
 
-def unit_label(unit: Unit) -> str:
+_LABEL_PREFIX = 35  # mark, two sizes and the suggestion hint
+
+
+def unit_label(unit: Unit, width: int = 50) -> str:
     hint = ""
     if unit.decision is None and unit.suggestion:
         hint = "[yellow]→t[/] " if unit.suggestion.decision == TRASH else "[yellow]→k[/] "
-    return f"{_MARK[unit.decision]} {gb(unit.unique_bytes):>8} {gb(unit.total_bytes):>8}  {hint}{unit.label_path}"
+    suffix = "\\(files here)" if unit.kind == FILES else ""
+    path = short_path(unit.path, max(12, width - len(suffix))) + suffix
+    return f"{_MARK[unit.decision]} {gb(unit.unique_bytes):>8} {gb(unit.total_bytes):>8}  {hint}{path}"
 
 
 def unit_detail(unit: Unit) -> str:
@@ -84,8 +89,8 @@ class ReviewApp(App[None]):
     #columns { height: 1; color: $text-muted; }
     #side { width: 2fr; }
     #detail { height: 1fr; padding: 0 1; overflow-y: auto; }
-    #buttons { height: 3; }
-    #buttons Button { min-width: 8; margin: 0 1 0 0; }
+    #buttons { height: 6; grid-size: 3 2; grid-gutter: 0 1; }
+    #buttons Button { width: 100%; min-width: 6; }
     #summary { height: 1; background: $accent; color: $text; padding: 0 1; }
     """
 
@@ -105,7 +110,7 @@ class ReviewApp(App[None]):
                 yield ListView(id="units")
             with Vertical(id="side"):
                 yield Static(id="detail", markup=True)
-                with Horizontal(id="buttons"):
+                with Grid(id="buttons"):
                     yield Button("Keep (k)", id="b-keep", variant="success")
                     yield Button("Trash (t)", id="b-trash", variant="error")
                     yield Button("Accept (a)", id="b-accept", variant="warning")
@@ -125,8 +130,9 @@ class ReviewApp(App[None]):
         self.shown = [u for u in self.session.units if not (self.hide_decided and u.decision)]
         lv = self.query_one("#units", ListView)
         lv.clear()
+        width = self._label_width()
         for unit in self.shown:
-            lv.append(ListItem(Label(unit_label(unit), markup=True)))
+            lv.append(ListItem(Label(unit_label(unit, width), markup=True)))
         if select is not None and select in self.shown:
             index = self.shown.index(select)
         if self.shown:
@@ -148,10 +154,19 @@ class ReviewApp(App[None]):
             f"keep {gb(t['keep'])}   trash {gb(t['trash'])}   undecided {gb(t['undecided'])}"
         )
 
+    def _label_width(self) -> int:
+        lv = self.query_one("#units", ListView)
+        available = lv.size.width or (self.size.width * 3) // 5
+        return max(20, available - _LABEL_PREFIX)
+
     def _relabel(self) -> None:
         lv = self.query_one("#units", ListView)
+        width = self._label_width()
         for item, unit in zip(lv.children, self.shown):
-            item.query_one(Label).update(unit_label(unit))
+            item.query_one(Label).update(unit_label(unit, width))
+
+    def on_resize(self, _event) -> None:
+        self.call_after_refresh(self._relabel)
 
     def _advance(self) -> None:
         lv = self.query_one("#units", ListView)
