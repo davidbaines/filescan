@@ -33,7 +33,7 @@ import json
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from filescan.config import load_config
 from filescan.exclusion_index import classify_folders, is_doomed
@@ -42,6 +42,9 @@ from filescan.progress import progress_bar, track
 from filescan.review.model import FILES, TRASH, TREE
 from filescan.storage import SQLiteDB
 from filescan.storage.sql import CLOUD_PLACEHOLDER_MASK
+
+# Folders that belong to the live volume, never planned whatever a review decided.
+_VOLUME_FOLDERS = {"system volume information", "$recycle.bin"}
 
 PLAN_FIELDS = ["location", "status", "reason", "unit", "size", "mtime", "full_hash", "copy_path", "path", "file_id"]
 
@@ -228,6 +231,15 @@ def build_plan(db: SQLiteDB, config: ScanConfig, *, only: str | None = None,
     print("Classifying folders against the exclusion rules...")
     folder_rules = classify_folders(db, config)
     seen: set[int] = set()
+    keep_rules = [r for r in config.exclusions if r.disposition == "keep-in-place"]
+    kept_folder: dict[int, bool] = {}
+
+    def in_keep_area(folder_id: int, folder: str) -> bool:
+        # Any keep-in-place rule protects a folder, even if a delete-candidate
+        # rule comes first in the config (old-os-in-backups inside evelyn).
+        if folder_id not in kept_folder:
+            kept_folder[folder_id] = any(r.matches(PureWindowsPath(folder)) for r in keep_rules)
+        return kept_folder[folder_id]
 
     def consider(row, reason: str, unit: str | None, *, from_rule: bool) -> None:
         file_id = int(row["id"])
@@ -236,12 +248,14 @@ def build_plan(db: SQLiteDB, config: ScanConfig, *, only: str | None = None,
         seen.add(file_id)
         path = row["path"]
         low = norm(path)
-        rule = folder_rules.get(int(row["folder_id"]))
-        if rule is not None and rule.disposition == "keep-in-place":
+        if in_keep_area(int(row["folder_id"]), row["folder"]):
             plan.held["keep-in-place exclusion"] += 1
             return
         if _under(low, pinned):
             plan.held["pinned folder"] += 1
+            return
+        if _VOLUME_FOLDERS & set(low.split("\\")):
+            plan.held["Windows volume folder (System Volume Information, $RECYCLE.BIN)"] += 1
             return
         if int(row["attributes"]) & CLOUD_PLACEHOLDER_MASK:
             plan.held["cloud placeholder"] += 1
@@ -252,6 +266,10 @@ def build_plan(db: SQLiteDB, config: ScanConfig, *, only: str | None = None,
         root = root_for(path, roots)
         if root is None:
             plan.held["outside every configured root"] += 1
+            return
+        if from_rule and root.location == "pc" and path[len(str(root.path).rstrip("\\")) + 1:].startswith("."):
+            # A dot folder at the top of a PC root, such as C:\\Users\\David\\.claude, belongs to a live program.
+            plan.held["live program folder (dot folder in the profile)"] += 1
             return
         if only and root.location != only:
             return

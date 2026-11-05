@@ -136,11 +136,19 @@ class _Missing:
 # ---------------------------------------------------------------- the three operations
 
 
-def _jobs(entries: list[PlanEntry], config: ScanConfig, only: str | None) -> list[tuple[PlanEntry, RootConfig]]:
+def reason_matches(entry_reason: str, wanted: str | None) -> bool:
+    """`wanted` is a full reason such as review:server-trash, or a prefix ending in ':' such as rule:."""
+    if not wanted:
+        return True
+    return entry_reason == wanted or (wanted.endswith(":") and entry_reason.startswith(wanted))
+
+
+def _jobs(entries: list[PlanEntry], config: ScanConfig, only: str | None,
+          reason: str | None = None) -> list[tuple[PlanEntry, RootConfig]]:
     roots = root_configs(config)
     jobs = []
     for e in entries:
-        if only and e.location != only:
+        if (only and e.location != only) or not reason_matches(e.reason, reason):
             continue
         root = root_for(e.path, roots)
         if root is not None:
@@ -199,11 +207,11 @@ def _execute(config: ScanConfig, folder: Path, jobs: list[tuple[PlanEntry, RootC
 
 
 def quarantine(config: ScanConfig, plan_path: Path, *, only: str | None = None, dry_run: bool = False,
-               runner: ServerRunner | None = None) -> Counter:
+               runner: ServerRunner | None = None, reason: str | None = None) -> Counter:
     folder, entries = read_plan(plan_path)
     states = last_states(folder)
     jobs = []
-    for entry, root in _jobs(entries, config, only):
+    for entry, root in _jobs(entries, config, only, reason):
         if states.get(entry.path, {}).get("status") == "moved" and states[entry.path].get("op") == "quarantine":
             continue  # already in quarantine
         jobs.append((entry, root, {"op": "quarantine", "src": entry.path,
@@ -227,11 +235,11 @@ def quarantine(config: ScanConfig, plan_path: Path, *, only: str | None = None, 
 
 
 def restore(config: ScanConfig, plan_path: Path, *, only: str | None = None,
-            runner: ServerRunner | None = None) -> Counter:
+            runner: ServerRunner | None = None, reason: str | None = None) -> Counter:
     folder, entries = read_plan(plan_path)
     states = last_states(folder)
     jobs = []
-    for entry, root in _jobs(entries, config, only):
+    for entry, root in _jobs(entries, config, only, reason):
         state = states.get(entry.path, {})
         if state.get("status") == "moved" and state.get("op") == "quarantine":
             jobs.append((entry, root, {"op": "restore", "src": quarantine_path(entry.path, root, folder.name),
@@ -258,12 +266,12 @@ def _copy_still_there(entry: PlanEntry) -> bool:
 
 def purge(config: ScanConfig, plan_path: Path, *, older_than_days: float = 14, yes: bool = False,
           only: str | None = None, runner: ServerRunner | None = None,
-          now: datetime | None = None) -> Counter:
+          now: datetime | None = None, reason: str | None = None) -> Counter:
     folder, entries = read_plan(plan_path)
     states = last_states(folder)
     cutoff = (now or datetime.now()) - timedelta(days=older_than_days)
     jobs, held = [], Counter()
-    for entry, root in _jobs(entries, config, only):
+    for entry, root in _jobs(entries, config, only, reason):
         state = states.get(entry.path, {})
         if not (state.get("status") == "moved" and state.get("op") == "quarantine"):
             continue
@@ -296,21 +304,24 @@ def _print_counts(title: str, counts: Counter) -> None:
         print(f"  {status:12} {n:>10,}")
 
 
-def run_cleanup(config_path, plan: str, *, only: str | None = None, dry_run: bool = False) -> None:
+def run_cleanup(config_path, plan: str, *, only: str | None = None, dry_run: bool = False,
+                reason: str | None = None) -> None:
     config = load_config(config_path)
-    counts = quarantine(config, Path(plan), only=only, dry_run=dry_run)
+    counts = quarantine(config, Path(plan), only=only, dry_run=dry_run, reason=reason)
     if not dry_run:
         _print_counts("Quarantine results (moved = in quarantine; changed, missing and error = left alone):", counts)
         print(f"To put files back: filescan cleanup-restore --plan \"{plan}\"")
 
 
-def run_cleanup_restore(config_path, plan: str, *, only: str | None = None) -> None:
+def run_cleanup_restore(config_path, plan: str, *, only: str | None = None, reason: str | None = None) -> None:
     config = load_config(config_path)
-    _print_counts("Restore results (moved = back in place):", restore(config, Path(plan), only=only))
+    _print_counts("Restore results (moved = back in place):", restore(config, Path(plan), only=only, reason=reason))
+    print("If the drive was rescanned while the files were in quarantine, rescan it again so they reappear.")
 
 
-def run_cleanup_purge(config_path, plan: str, *, older_than_days: float, yes: bool, only: str | None) -> None:
+def run_cleanup_purge(config_path, plan: str, *, older_than_days: float, yes: bool, only: str | None,
+                      reason: str | None = None) -> None:
     config = load_config(config_path)
-    counts = purge(config, Path(plan), older_than_days=older_than_days, yes=yes, only=only)
+    counts = purge(config, Path(plan), older_than_days=older_than_days, yes=yes, only=only, reason=reason)
     if yes:
         _print_counts("Purge results (purged = deleted for good):", counts)

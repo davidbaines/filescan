@@ -35,11 +35,14 @@ def _setup(tmp_path: Path):
         "Code/repo/bin/out.o": b"repo build output",
         "Code/tool/bin/x.o": b"loose build output",
         "Code/tool/bin/maybe.iso": b"review-only rule",
+        "Trash/old/evelyn/e.txt": b"keep-in-place, listed after the trash rule",
+        ".tool/cache/c.bin": b"a live program's cache",
     })
     config_path = tmp_path / "config.yml"
     config_path.write_text(yaml.safe_dump({
         "roots": [{"path": str(pc)}],
-        "exclusions": [{"name": "server-trash", "pattern": r"\\Trash\\", "reason": "Trash"}],
+        "exclusions": [{"name": "server-trash", "pattern": r"\\Trash\\", "reason": "Trash"},
+                       {"name": "evelyn", "pattern": r"\\evelyn\\", "disposition": "keep-in-place"}],
         "pinned": [str(pc / "Trash" / "pinned")],
         "filescan_folder": str(tmp_path / "fs"),
         "database_folder": str(tmp_path / "fs"),
@@ -61,6 +64,7 @@ def _setup(tmp_path: Path):
         "('server-trash', ?, ?, ?, 0, 0)", decisions)
     for name, rule, disposition in (("out.o", "build-output", "delete-candidate"),
                                     ("x.o", "build-output", "delete-candidate"),
+                                    ("c.bin", "caches", "delete-candidate"),
                                     ("maybe.iso", "disk-images", "review")):
         fid = db.conn.execute("SELECT id FROM files WHERE filename = ?", (name,)).fetchone()["id"]
         db.conn.execute("INSERT INTO unwanted_matches VALUES (?, ?, ?)", (fid, rule, disposition))
@@ -97,7 +101,8 @@ def test_plan_selects_the_right_files(tmp_path):
     assert got["Trash/x/t.txt"].status == got["Trash/y/t.txt"].status == "unique"
     assert got["Trash/old/a.txt"].reason == "review:server-trash"
     assert got["Code/tool/bin/x.o"].reason == "rule:build-output"
-    assert plan.held == Counter({"pinned folder": 1, "inside a Git repository": 1})
+    assert plan.held == Counter({"pinned folder": 1, "inside a Git repository": 1, "keep-in-place exclusion": 1,
+                                 "live program folder (dot folder in the profile)": 1})
 
 
 def test_quarantine_restore_and_purge(tmp_path):
@@ -206,3 +211,17 @@ def test_fsagent_move_checks_size_mtime_and_never_overwrites(tmp_path):
     assert fsagent.remove_one(str(dst), 6, str(root))["status"] == "changed"
     assert fsagent.remove_one(str(dst), 5, str(root))["status"] == "purged"
     assert not (root / "q").exists() and (root / "other.txt").exists()
+
+
+def test_reason_filter_and_volume_folders(tmp_path):
+    config, db, pc = _setup(tmp_path)
+    build_tree(pc, {"Trash/old/System Volume Information/s.dat": b"volume"})
+    try:
+        plan = build_plan(db, config, plan_id="p2")
+    finally:
+        db.close()
+    folder = write_plan(plan, config.filescan_folder / "cleanup")
+    assert quarantine(config, folder, dry_run=True, reason="rule:") == Counter(would_move=1)
+    assert quarantine(config, folder, dry_run=True, reason="review:server-trash") == Counter(would_move=5)
+    assert quarantine(config, folder, reason="rule:build-output") == Counter(moved=1)
+    assert (pc / "Trash" / "old" / "a.txt").exists()

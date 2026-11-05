@@ -103,9 +103,11 @@ def build_parser() -> argparse.ArgumentParser:
     cq.add_argument("--plan", required=True, help="Plan folder (or its files.csv) from cleanup-plan.")
     cq.add_argument("--only", choices=("pc", "server"))
     cq.add_argument("--dry-run", action="store_true", help="Count what would move; move nothing.")
+    cq.add_argument("--reason", help="Only this reason from the plan, e.g. review:server-trash, or a prefix such as rule:")
     cr = subparsers.add_parser("cleanup-restore", help="Put quarantined files from a plan back where they were.")
     cr.add_argument("--plan", required=True)
     cr.add_argument("--only", choices=("pc", "server"))
+    cr.add_argument("--reason")
     cx = subparsers.add_parser(
         "cleanup-purge", help="Delete a plan's quarantined files for good, after a waiting period. Needs --yes."
     )
@@ -114,6 +116,7 @@ def build_parser() -> argparse.ArgumentParser:
     cx.add_argument("--older-than-days", type=float, default=14.0,
                     help="Only files quarantined at least this long ago (default 14).")
     cx.add_argument("--yes", action="store_true", help="Really delete. Without it, only report what would go.")
+    cx.add_argument("--reason")
     clusters_parser = subparsers.add_parser("clusters", help="Debug: dump folder clusters as JSON.")
     clusters_parser.add_argument("--show-suppressed", action="store_true", help="Include hierarchy-suppressed clusters.")
 
@@ -275,13 +278,14 @@ def main(argv: list[str] | None = None) -> int:
         run_cleanup_plan(args.config, only=args.only, include_rules=not args.no_rules)
     elif args.command == "cleanup":
         _stage_start("cleanup")
-        run_cleanup(args.config, args.plan, only=args.only, dry_run=args.dry_run)
+        run_cleanup(args.config, args.plan, only=args.only, dry_run=args.dry_run, reason=args.reason)
     elif args.command == "cleanup-restore":
         _stage_start("cleanup-restore")
-        run_cleanup_restore(args.config, args.plan, only=args.only)
+        run_cleanup_restore(args.config, args.plan, only=args.only, reason=args.reason)
     elif args.command == "cleanup-purge":
         _stage_start("cleanup-purge")
-        run_cleanup_purge(args.config, args.plan, older_than_days=args.older_than_days, yes=args.yes, only=args.only)
+        run_cleanup_purge(args.config, args.plan, older_than_days=args.older_than_days, yes=args.yes, only=args.only,
+                          reason=args.reason)
     elif args.command == "exclusions-report":
         _stage_start("exclusions-report")
         print(run_exclusions_report(args.config))
