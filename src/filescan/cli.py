@@ -14,6 +14,8 @@ from filescan.inventory.scanner import run_scan
 from filescan.inventory.server_import import run_import_server
 from filescan.planning.artifacts import load_plan_artifact
 from filescan.planning.proposals import build_plan_artifact
+from filescan.cleanup.plan import run_cleanup_plan
+from filescan.cleanup.quarantine import run_cleanup, run_cleanup_purge, run_cleanup_restore
 from filescan.reporting.exclusions import run_exclusions_report
 from filescan.reporting.measure import run_measure
 from filescan.reporting.largest_files import _fmt_size, find_large_files, run_largest
@@ -89,6 +91,29 @@ def build_parser() -> argparse.ArgumentParser:
         "exclusions-report",
         help="List the folders each exclusion rule leaves out of the organised set, with sizes (CSV).",
     )
+    cp = subparsers.add_parser(
+        "cleanup-plan",
+        help="List every file marked trash in a review, or matched by a delete-candidate rule (CSV, for review).",
+    )
+    cp.add_argument("--only", choices=("pc", "server"), help="Plan only PC files or only server files.")
+    cp.add_argument("--no-rules", action="store_true", help="Leave out unwanted-data rules; reviews only.")
+    cq = subparsers.add_parser(
+        "cleanup", help="Move the files in a reviewed cleanup plan to quarantine on the same disk (reversible)."
+    )
+    cq.add_argument("--plan", required=True, help="Plan folder (or its files.csv) from cleanup-plan.")
+    cq.add_argument("--only", choices=("pc", "server"))
+    cq.add_argument("--dry-run", action="store_true", help="Count what would move; move nothing.")
+    cr = subparsers.add_parser("cleanup-restore", help="Put quarantined files from a plan back where they were.")
+    cr.add_argument("--plan", required=True)
+    cr.add_argument("--only", choices=("pc", "server"))
+    cx = subparsers.add_parser(
+        "cleanup-purge", help="Delete a plan's quarantined files for good, after a waiting period. Needs --yes."
+    )
+    cx.add_argument("--plan", required=True)
+    cx.add_argument("--only", choices=("pc", "server"))
+    cx.add_argument("--older-than-days", type=float, default=14.0,
+                    help="Only files quarantined at least this long ago (default 14).")
+    cx.add_argument("--yes", action="store_true", help="Really delete. Without it, only report what would go.")
     clusters_parser = subparsers.add_parser("clusters", help="Debug: dump folder clusters as JSON.")
     clusters_parser.add_argument("--show-suppressed", action="store_true", help="Include hierarchy-suppressed clusters.")
 
@@ -245,6 +270,18 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "review":
         _stage_start("review")
         run_review(args.config, args.scope, split_gb=args.split_gb)
+    elif args.command == "cleanup-plan":
+        _stage_start("cleanup-plan")
+        run_cleanup_plan(args.config, only=args.only, include_rules=not args.no_rules)
+    elif args.command == "cleanup":
+        _stage_start("cleanup")
+        run_cleanup(args.config, args.plan, only=args.only, dry_run=args.dry_run)
+    elif args.command == "cleanup-restore":
+        _stage_start("cleanup-restore")
+        run_cleanup_restore(args.config, args.plan, only=args.only)
+    elif args.command == "cleanup-purge":
+        _stage_start("cleanup-purge")
+        run_cleanup_purge(args.config, args.plan, older_than_days=args.older_than_days, yes=args.yes, only=args.only)
     elif args.command == "exclusions-report":
         _stage_start("exclusions-report")
         print(run_exclusions_report(args.config))

@@ -8,7 +8,7 @@ from typing import Any
 import yaml
 
 from filescan.inventory.normalizer import normalize_path
-from filescan.models import ExclusionRule, RootConfig, ScanConfig
+from filescan.models import QUARANTINE_DIR, ExclusionRule, RootConfig, ScanConfig
 
 _SIZE_PATTERN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(B|KB|MB|GB)?\s*$", re.IGNORECASE)
 _SIZE_MULTIPLIERS = {"b": 1, "kb": 1024, "mb": 1024 ** 2, "gb": 1024 ** 3}
@@ -72,6 +72,8 @@ def _parse_root(item: dict[str, Any]) -> RootConfig:
     if location == "server" and not server_path:
         raise ValueError(f"Root {root_path}: a server root needs 'server_path', its POSIX mount point on the server.")
     exclude_dirs = tuple(str(name) for name in (item.get("exclude_dirs") or []))
+    if location == "server" and QUARANTINE_DIR not in exclude_dirs:
+        exclude_dirs += (QUARANTINE_DIR,)
     return RootConfig(  # type: ignore[arg-type]
         path=root_path,
         location=location,
@@ -189,7 +191,7 @@ def load_config(config_path: str | Path) -> ScanConfig:
         filescan_folder=filescan_folder,
         database_path=database_path,
         report_path=report_path,
-        exclude_folders=frozenset(str(item) for item in exclude_folders),
+        exclude_folders=frozenset(str(item) for item in exclude_folders) | {QUARANTINE_DIR},
         exclude_extensions=frozenset(str(item).lower() for item in exclude_extensions),
         min_file_size=min_file_size,
         max_file_size=max_file_size,

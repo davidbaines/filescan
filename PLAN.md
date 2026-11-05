@@ -207,7 +207,13 @@ Files are scattered across the PC (C: user folders, D:, E:, F:), the LaCie J: an
   - Categories go to drives: F: first, overflowing to E: and D:.
   - Files already on the target drive are moved; anything else is copied from the master.
   - Pinned folders stay where they are.
-- [ ] New command `filescan cleanup-plan`, with a separate `cleanup --delete` that offers a recycle-bin or quarantine option.
+- [x] Cleanup commands, built 5 November. Quarantine is the default; the user chose it over the Recycle Bin, which does not cover network shares and deletes outright anything too large for it.
+  - `filescan cleanup-plan [--only pc|server] [--no-rules]` lists every file under a folder marked trash in a review, plus files matched by delete-candidate rules. It works file by file, as at the last scan. It never includes pinned folders, keep-in-place exclusions, cloud placeholders, files under a folder marked keep, or rule matches inside Git repositories. Each file is "covered" (an identical copy is kept outside the plan and every doomed area) or "unique". Output: `cleanup\<plan id>\summary.csv` and `files.csv`.
+  - `filescan cleanup --plan <folder> [--dry-run]` renames each file into `<root>\_filescan_quarantine\<plan id>\…` on the same disk, only if its size and mtime still match; it never copies across disks or overwrites. Server files go through `fsagent move` over SSH. Moved files are marked missing in the database; the scanner and `fsagent list` skip the quarantine folder.
+  - `filescan cleanup-restore --plan <folder>` puts files back.
+  - `filescan cleanup-purge --plan <folder> [--older-than-days 14] --yes` deletes quarantined files for good; a covered file is kept if its copy has gone. Without `--yes` it only reports.
+  - Every action is logged in `actions.jsonl` in the plan folder, so each command resumes after an interruption.
+- [ ] **[USER]** Review the first plan, then quarantine the server Trash and the reviewed excluded areas.
 - [ ] Work through the drives one at a time. For each drive, in order:
   1. move files into the layout;
   2. rescan;

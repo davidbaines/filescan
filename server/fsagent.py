@@ -28,6 +28,19 @@ copy --manifest MANIFEST.jsonl --log LOG.jsonl [--dry-run]
     a matching hash is logged as "exists", a different one as "conflict".
     Entries already logged as "copied" or "exists" are skipped on a rerun.
 
+move --manifest MANIFEST.jsonl --log LOG.jsonl
+    Each manifest line is {"src", "dst", "size", "mtime", "stop"}. The file is
+    renamed to dst only if its size and mtime (seconds) still match, and never
+    across filesystems or over an existing dst. Folders left empty are then
+    removed, up to but not including "stop". Used to quarantine files and to
+    restore them. A file already at dst and gone from src counts as moved, so
+    a rerun resumes.
+
+remove --manifest MANIFEST.jsonl --log LOG.jsonl
+    Each manifest line is {"path", "size", "stop"}. The file is deleted only if
+    its size still matches; empty folders are removed up to "stop". Used to
+    empty the quarantine.
+
 hashfile PATH
     Print the xxh128 of one file, to check parity with the PC's full hash.
 """
@@ -308,6 +321,102 @@ def cmd_copy(manifest_path: str, log_path: str, dry_run: bool) -> int:
     return 1 if failures else 0
 
 
+# --- move and remove (quarantine) ----------------------------------------------
+
+MTIME_TOLERANCE = 1e-3  # seconds; the PC stores mtimes as floats
+
+
+def prune_empty(folder: str, stop: str) -> None:
+    """Remove folder and its parents while they are empty, never stop or anything above it."""
+    # join(..., "") adds exactly one trailing separator, also for a drive root such as D:\\
+    inside = os.path.normcase(os.path.join(os.path.abspath(stop), ""))
+    folder = os.path.abspath(folder)
+    while True:
+        norm = os.path.normcase(os.path.join(folder, ""))
+        if norm == inside or not norm.startswith(inside):
+            return
+        try:
+            os.rmdir(folder)  # fails unless the folder is empty
+        except OSError:
+            return
+        folder = os.path.dirname(folder)
+
+
+def move_one(src: str, dst: str, size: int, mtime: float, stop: str | None = None) -> dict:
+    """Rename src to dst if it is unchanged. Never overwrites, never copies."""
+    if not os.path.lexists(src):
+        if os.path.lexists(dst):
+            return {"status": "moved", "note": "already moved"}
+        return {"status": "missing"}
+    st = os.lstat(src)
+    if not stat.S_ISREG(st.st_mode):
+        return {"status": "changed", "error": "no longer a regular file"}
+    if st.st_size != int(size) or abs(st.st_mtime_ns / 1e9 - float(mtime)) > MTIME_TOLERANCE:
+        return {"status": "changed", "error": f"size {st.st_size}, mtime {st.st_mtime_ns / 1e9}"}
+    if os.path.lexists(dst):
+        return {"status": "conflict", "error": "destination exists"}
+    try:
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        # os.rename never copies: across filesystems it fails (EXDEV), which is
+        # what we want, unlike shutil.move.
+        os.rename(src, dst)
+    except OSError as exc:
+        return {"status": "error", "error": str(exc)}
+    if stop:
+        prune_empty(os.path.dirname(src), stop)
+    return {"status": "moved", "bytes": st.st_size}
+
+
+def remove_one(path: str, size: int, stop: str | None = None) -> dict:
+    if not os.path.lexists(path):
+        return {"status": "missing"}
+    st = os.lstat(path)
+    if not stat.S_ISREG(st.st_mode) or st.st_size != int(size):
+        return {"status": "changed", "error": f"size {st.st_size}"}
+    try:
+        os.remove(path)
+    except OSError as exc:
+        return {"status": "error", "error": str(exc)}
+    if stop:
+        prune_empty(os.path.dirname(path), stop)
+    return {"status": "purged", "bytes": st.st_size}
+
+
+def _run_manifest(label: str, manifest_path: str, log_path: str, key: str, action) -> int:
+    finished = {
+        rec[key] for rec in _read_jsonl(log_path)
+        if isinstance(rec, dict) and rec.get("status") in ("moved", "purged") and key in rec
+    }
+    entries = [e for e in _read_jsonl(manifest_path) if isinstance(e, dict)]
+    todo = [e for e in entries if e[key] not in finished]
+    print(f"[{label}] {len(entries) - len(todo):,} already done, {len(todo):,} to do", file=sys.stderr, flush=True)
+    progress = _Progress(label, total=len(todo))
+    failures = 0
+    with _open_append(log_path) as log:
+        for entry in todo:
+            try:
+                result = action(entry)
+            except OSError as exc:
+                result = {"status": "error", "error": str(exc)}
+            if result["status"] in ("error", "conflict"):
+                failures += 1
+            _emit(log, {**{k: entry[k] for k in ("src", "dst", "path") if k in entry}, **result})
+            log.flush()
+            progress.tick(int(result.get("bytes", 0)))
+    progress.report(final=True)
+    return 1 if failures else 0
+
+
+def cmd_move(manifest_path: str, log_path: str) -> int:
+    return _run_manifest("move", manifest_path, log_path, "src",
+                         lambda e: move_one(e["src"], e["dst"], e["size"], e["mtime"], e.get("stop")))
+
+
+def cmd_remove(manifest_path: str, log_path: str) -> int:
+    return _run_manifest("remove", manifest_path, log_path, "path",
+                         lambda e: remove_one(e["path"], e["size"], e.get("stop")))
+
+
 # --- entry point --------------------------------------------------------------
 
 
@@ -329,6 +438,14 @@ def main(argv: list[str] | None = None) -> int:
     p_copy.add_argument("--log", required=True)
     p_copy.add_argument("--dry-run", action="store_true")
 
+    p_move = sub.add_parser("move")
+    p_move.add_argument("--manifest", required=True)
+    p_move.add_argument("--log", required=True)
+
+    p_remove = sub.add_parser("remove")
+    p_remove.add_argument("--manifest", required=True)
+    p_remove.add_argument("--log", required=True)
+
     p_one = sub.add_parser("hashfile")
     p_one.add_argument("path")
 
@@ -340,6 +457,10 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_hash(args.input, args.output)
     if args.command == "copy":
         return cmd_copy(args.manifest, args.log, args.dry_run)
+    if args.command == "move":
+        return cmd_move(args.manifest, args.log)
+    if args.command == "remove":
+        return cmd_remove(args.manifest, args.log)
     if args.command == "hashfile":
         print(hash_file(args.path)[0])
         return 0

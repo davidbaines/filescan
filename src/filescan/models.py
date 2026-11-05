@@ -11,6 +11,11 @@ ApprovalState = Literal["pending", "approved", "rejected"]
 RootLocation = Literal["pc", "server"]
 RootRole = Literal["source", "master"]
 
+# Folder at the top of each root that holds quarantined files (filescan cleanup).
+# The scanner and the server listing always skip it, so quarantined files are
+# never indexed again or counted as copies.
+QUARANTINE_DIR = "_filescan_quarantine"
+
 
 @dataclass(frozen=True, slots=True)
 class RootConfig:
