@@ -83,7 +83,7 @@ def test_plan_command_recreates_artifact_when_replan_is_requested(tmp_path: Path
     assert any(path != first_artifact for path in artifact_files)
 
 
-def test_cli_without_command_runs_default_pipeline(tmp_path: Path, write_config) -> None:
+def test_cli_run_command_runs_the_pipeline(tmp_path: Path, write_config) -> None:
     root = tmp_path / "root"
     build_tree(
         root,
@@ -96,7 +96,7 @@ def test_cli_without_command_runs_default_pipeline(tmp_path: Path, write_config)
 
     stdout = io.StringIO()
     with contextlib.redirect_stdout(stdout):
-        assert main(["--config", str(config_path)]) == 0
+        assert main(["--config", str(config_path), "run"]) == 0
 
     artifact_files = sorted((tmp_path / "filescan").glob("plan-*.json"))
     assert artifact_files

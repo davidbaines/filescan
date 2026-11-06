@@ -19,7 +19,12 @@ The current work extends filescan to compare the PC with a Linux home server and
 ```bash
 poetry install                                   # install dependencies
 
-filescan --config config.yml run                 # full non-destructive pipeline
+# --config can be left out when FILESCAN_CONFIG is set in the environment or in .env at the
+# repository root (copy .env.example). There is no built-in default. With no command,
+# filescan prints the help, grouped by stage.
+filescan status                                  # where the work stands and what to run next (reads only)
+filescan delete-folder "D:\Old" [--yes]          # report on whole PC folders; --yes deletes them and updates the database
+filescan --config config.yml run                 # older merge pipeline (non-destructive)
 filescan --config config.yml scan
 filescan --config config.yml duplicates
 filescan --config config.yml similarity
@@ -83,7 +88,7 @@ The live configuration and database are in `C:\filescan` (`config.yml`, `file_in
 - Configure server roots as UNC paths (`\\192.168.1.133\disk3`), never as mapped drive letters: an elevated shell cannot see drives mapped in a normal session.
 - Keep the SQLite database on a local disk, never on a network share.
 - Suggestions must be reviewed by the user before any file operation.
-- Never delete source data in the normal pipeline. Deletion is always a separate, explicit command that acts on a reviewed plan.
+- Never delete source data in the normal pipeline. Deletion is always a separate, explicit command: `cleanup-purge --yes` acts on a reviewed plan, and `delete-folder --yes` acts on folders the user names after reading its report. `delete-folder` never goes through a junction or symbolic link, and never changes permissions on C:.
 - Treat exact duplicate files and similar folders as separate concerns.
 
 ## Analysis rules
@@ -98,13 +103,15 @@ The live configuration and database are in `C:\filescan` (`config.yml`, `file_in
 
 - Always show the active process during long-running work.
 - Every long-running loop uses a visible `tqdm` progress bar with `leave=True`.
-- The default CLI command runs the normal non-destructive pipeline.
-- The default pipeline ends with a summary and a report in the configured filescan folder.
+- With no command, filescan prints the help, with the commands grouped by stage. `run` runs the older non-destructive merge pipeline.
+- `run` ends with a summary and a report in the configured filescan folder.
+- `filescan status` only reads; it never runs a stage. Keep its to-do list in step with the phases in PLAN.md.
 
 ## Config rules
 
 - Related outputs share one `filescan_folder`.
 - Database and report locations come from `database_folder`, `database_filename` and `report_filename`.
+- The configuration file comes from `--config`, then `FILESCAN_CONFIG` in the environment, then `FILESCAN_CONFIG` in `.env` at the repository root. `.env` is not committed; `.env.example` shows the format.
 
 ## Engineering rules
 

@@ -10,6 +10,57 @@ import yaml
 from filescan.inventory.normalizer import normalize_path
 from filescan.models import QUARANTINE_DIR, ExclusionRule, RootConfig, ScanConfig
 
+CONFIG_ENV = "FILESCAN_CONFIG"
+# The .env file sits at the root of the repository: src/filescan/config.py -> parents[2].
+REPO_ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
+
+
+class ConfigNotSet(Exception):
+    """No --config, no FILESCAN_CONFIG in the environment and none in .env."""
+
+
+def read_env_file(path: Path) -> dict[str, str]:
+    """KEY=VALUE lines; blank lines and # comments are ignored, and quotes round a value are removed."""
+    values: dict[str, str] = {}
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except OSError:
+        return values
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+            value = value[1:-1]
+        values[key.strip()] = value
+    return values
+
+
+def resolve_config_path(given: Path | None, *, environ: dict[str, str] | None = None,
+                        env_file: Path = REPO_ENV_FILE) -> tuple[Path, str]:
+    """The configuration file and where it came from: --config, then the environment, then .env.
+
+    There is deliberately no built-in default: without one of the three, filescan stops.
+    """
+    import os
+
+    if given is not None:
+        return Path(given), "--config"
+    environ = os.environ if environ is None else environ
+    if environ.get(CONFIG_ENV):
+        return Path(environ[CONFIG_ENV]), f"{CONFIG_ENV} in the environment"
+    value = read_env_file(env_file).get(CONFIG_ENV)
+    if value:
+        return Path(value), str(env_file)
+    raise ConfigNotSet(
+        f"No configuration file given. Either pass --config, or create {env_file} containing a line such as\n"
+        f"  {CONFIG_ENV}=C:\\filescan\\v2\\config.yml\n"
+        "(.env.example in the repository shows the format)."
+    )
+
+
 _SIZE_PATTERN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(B|KB|MB|GB)?\s*$", re.IGNORECASE)
 _SIZE_MULTIPLIERS = {"b": 1, "kb": 1024, "mb": 1024 ** 2, "gb": 1024 ** 3}
 
