@@ -152,6 +152,9 @@ def _duplicates_summary(status: Status, config: ScanConfig) -> None:
     if summary.get("unreadable"):
         status.add(f"    {summary['unreadable']:,} files could not be read, so they have no hash; they are tried "
                    "again on every run")
+    if summary.get("changed_since_scan"):
+        status.add(f"    {summary['changed_since_scan']:,} files had changed since the scan and were not hashed; "
+                   "scan again to include them")
 
 
 def _reviews(status: Status, config: ScanConfig) -> None:

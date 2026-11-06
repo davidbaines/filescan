@@ -29,6 +29,19 @@ def summary_path(config: ScanConfig) -> Path:
     return config.filescan_folder / SUMMARY_FILE
 
 
+def _same_as_scanned(path: Path, record: FileRecord) -> bool:
+    stat = path.stat()
+    return stat.st_size == record.size and stat.st_mtime == record.mtime
+
+
+def _hash_if_unchanged(hasher, record: FileRecord) -> str | None:
+    """The file's hash, or None if its size or date differs from the scan, before or after reading."""
+    if not _same_as_scanned(record.path, record):
+        return None
+    digest = hasher(record.path)
+    return digest if _same_as_scanned(record.path, record) else None
+
+
 class DuplicateDetector:
     def __init__(self, config: ScanConfig, *, rescan: bool = False) -> None:
         self.config = config
@@ -37,6 +50,7 @@ class DuplicateDetector:
         self._last_commit = time.monotonic()
         self.reads = {"quick": 0, "full": 0}
         self.unreadable = 0
+        self.changed: set[int | None] = set()
 
     def _maybe_commit(self, repo: FileRepository, *, force: bool = False) -> None:
         if not self._pending:
@@ -72,7 +86,7 @@ class DuplicateDetector:
         pending = [file_record for file_record in files if getattr(file_record, attr) is None]
         if not pending:
             return
-        futures = {pool.submit(hasher, file_record.path): file_record for file_record in pending}
+        futures = {pool.submit(_hash_if_unchanged, hasher, file_record): file_record for file_record in pending}
         for future in as_completed(futures):
             file_record = futures[future]
             try:
@@ -80,6 +94,12 @@ class DuplicateDetector:
             except OSError as exc:
                 self._log_hash_skip(file_record.path, exc, full=full)
                 self.unreadable += 1
+                bar.update(1)
+                continue
+            if digest is None:
+                # Changed since the scan: a hash of the new content would be stored
+                # against the old size and date, so leave it for the next scan.
+                self.changed.add(file_record.id)
                 bar.update(1)
                 continue
             self.reads["full" if full else "quick"] += 1
@@ -140,23 +160,25 @@ class DuplicateDetector:
                         if file_record.quick_hash is not None:
                             by_quick[file_record.quick_hash].append(file_record)
                     candidates = list(by_quick.values())
+                # Collected across all quick-hash buckets: a stale stored quick hash can
+                # put two copies of the same content in different buckets.
+                by_full: dict[str, list[FileRecord]] = defaultdict(list)
                 for candidate in candidates:
                     if len(candidate) < 2:
                         continue
                     self._populate_hashes(repo, candidate, full=True, bar=full_bar, pool=pool)
-                    by_full: dict[str, list[FileRecord]] = defaultdict(list)
                     for file_record in candidate:
                         if file_record.full_hash is not None:
                             by_full[file_record.full_hash].append(file_record)
-                    for digest, matches in by_full.items():
-                        if len(matches) > 1:
-                            confirmed_groups.append(
-                                DuplicateGroup(
-                                    full_hash=digest,
-                                    size_bytes=matches[0].size,
-                                    files=tuple(sorted(matches, key=lambda item: str(item.path))),
-                                )
+                for digest, matches in by_full.items():
+                    if len(matches) > 1:
+                        confirmed_groups.append(
+                            DuplicateGroup(
+                                full_hash=digest,
+                                size_bytes=matches[0].size,
+                                files=tuple(sorted(matches, key=lambda item: str(item.path))),
                             )
+                        )
                 groups_bar.update(1)
 
         self._maybe_commit(repo, force=True)
@@ -166,7 +188,8 @@ class DuplicateDetector:
         self._write_summary(files=total_candidate_files, unhashed=unhashed, groups=len(confirmed_groups))
         print(
             f"  Read {self.reads['quick']:,} quick and {self.reads['full']:,} full hashes; "
-            f"{self.unreadable:,} files could not be read."
+            f"{self.unreadable:,} files could not be read; {len(self.changed):,} have changed since the scan "
+            "and were not hashed (scan again to include them)."
         )
         return confirmed_groups
 
@@ -178,6 +201,7 @@ class DuplicateDetector:
             "quick_read": self.reads["quick"],
             "full_read": self.reads["full"],
             "unreadable": self.unreadable,
+            "changed_since_scan": len(self.changed),
             "duplicate_groups": groups,
         }
         try:

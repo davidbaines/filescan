@@ -341,3 +341,37 @@ def test_unreadable_files_are_counted(tmp_path: Path, make_repo, monkeypatch) ->
     DuplicateDetector(config).run()
     assert json.loads(duplicate_module.summary_path(config).read_text(encoding="utf-8"))["unreadable"] == 1
     db.close()
+
+
+def test_stale_quick_hashes_do_not_split_one_content_into_two_groups(tmp_path: Path, make_repo) -> None:
+    """Seen on the live database: copies with an out-of-date quick hash landed in a second bucket."""
+    root = tmp_path / "root"
+    created = build_tree(root, {f"{n}/f.bin": b"same content" for n in "abcd"})
+    db, repo = make_repo(tmp_path / "duplicates.db")
+    index_paths(repo, root, created)
+    for record in repo.files_of_size(len(b"same content")):
+        if record.path.parent.name in "cd":
+            repo.upsert_file_hash(record.id, quick_hash="stale")
+    groups = DuplicateDetector(_config(tmp_path, root, "duplicates.db")).run()
+    assert len(groups) == 1 and len(groups[0].files) == 4
+    db.close()
+
+
+def test_a_file_changed_since_the_scan_is_not_hashed(tmp_path: Path, make_repo) -> None:
+    import json
+    import os
+
+    root = tmp_path / "root"
+    created = build_tree(root, {"a/x.bin": b"same", "b/y.bin": b"same"})
+    db, repo = make_repo(tmp_path / "duplicates.db")
+    index_paths(repo, root, created)
+    changed = root / "b" / "y.bin"
+    changed.write_bytes(b"edit")  # same size, new content and date
+    os.utime(changed, (1_000_000_000, 1_000_000_000))
+    config = _config(tmp_path, root, "duplicates.db")
+    assert DuplicateDetector(config).run() == []
+    hashed = {row[0] for row in db.conn.execute(
+        "SELECT f.filename FROM file_hashes h JOIN files f ON f.id = h.file_id")}
+    assert hashed == {"x.bin"}
+    assert json.loads(duplicate_module.summary_path(config).read_text(encoding="utf-8"))["changed_since_scan"] == 1
+    db.close()
