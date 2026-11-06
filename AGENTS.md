@@ -103,6 +103,7 @@ The live configuration and database are in `C:\filescan` (`config.yml`, `file_in
 
 - Always show the active process during long-running work.
 - Every long-running loop uses a visible `tqdm` progress bar with `leave=True`.
+- Never print inside a loop that has a progress bar. Problems with single files or folders go to `SkipLog` (`progress.py`), which writes them to `<filescan folder>\logs\`, shows a running count beside the bar and prints totals by reason once the bar has closed.
 - With no command, filescan prints the help, with the commands grouped by stage. `run` runs the older non-destructive merge pipeline.
 - `run` ends with a summary and a report in the configured filescan folder.
 - `filescan status` only reads; it never runs a stage. Keep its to-do list in step with the phases in PLAN.md.

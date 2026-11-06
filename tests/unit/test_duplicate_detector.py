@@ -375,3 +375,24 @@ def test_a_file_changed_since_the_scan_is_not_hashed(tmp_path: Path, make_repo) 
     assert hashed == {"x.bin"}
     assert json.loads(duplicate_module.summary_path(config).read_text(encoding="utf-8"))["changed_since_scan"] == 1
     db.close()
+
+
+def test_unreadable_files_go_to_the_log_not_the_screen(tmp_path: Path, make_repo, monkeypatch, capsys) -> None:
+    root = tmp_path / "root"
+    created = build_tree(root, {"a/x.bin": b"same", "b/locked.bin": b"same"})
+    db, repo = make_repo(tmp_path / "duplicates.db")
+    index_paths(repo, root, created)
+
+    def guarded(path: Path) -> str:
+        if path.name == "locked.bin":
+            raise PermissionError(13, "Permission denied")
+        return real_quick_hash(path)
+
+    monkeypatch.setattr(duplicate_module, "quick_hash", guarded)
+    detector = DuplicateDetector(_config(tmp_path, root, "duplicates.db"))
+    detector.run()
+    out = capsys.readouterr()
+    assert "locked.bin" not in out.out + out.err
+    assert "1  quick hash: PermissionError" in out.out
+    assert "locked.bin" in detector.skips.path.read_text(encoding="utf-8")
+    db.close()

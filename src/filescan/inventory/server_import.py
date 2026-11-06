@@ -18,7 +18,7 @@ from pathlib import Path, PureWindowsPath
 
 from filescan.config import load_config
 from filescan.models import FileRecord, FolderRecord, RootConfig, ScanConfig
-from filescan.progress import progress_bar
+from filescan.progress import SkipLog, progress_bar
 from filescan.storage import FileRepository, SQLiteDB
 
 FSAGENT = Path(__file__).resolve().parents[3] / "server" / "fsagent.py"
@@ -101,6 +101,7 @@ class ServerImporter:
     def __init__(self, config: ScanConfig, *, runner: Runner | None = None) -> None:
         self.config = config
         self.runner = runner or ssh_runner(config)
+        self.skips = SkipLog(config.filescan_folder, "import-server")
 
     def _flush(self, repo: FileRepository, pending: _PendingFolder, root: Path, scan_run_id: int) -> None:
         depth = len(pending.path.parts) - len(root.parts)
@@ -128,6 +129,7 @@ class ServerImporter:
         # fails part-way leaves the database untouched.
         lines = list(self.runner(root_config))
         with progress_bar(desc=f"import {root}", total=len(lines), unit="entry") as bar:
+            self.skips.attach(bar)
             for line in lines:
                 bar.update(1)
                 line = line.strip()
@@ -137,7 +139,7 @@ class ServerImporter:
                 kind = record.get("type")
                 if kind == "error":
                     summary.errors += 1
-                    print(f"Server error: {record.get('path')} ({record.get('error')})")
+                    self.skips.add("server error", record.get("path"), record.get("error"))
                     continue
                 unc = None if record.get("bad_name") else posix_to_unc(record["path"], server_root, root)
                 if unc is None:
@@ -152,7 +154,7 @@ class ServerImporter:
                     if pending is None or unc.parent != pending.path:
                         # fsagent lists a folder's files straight after the folder.
                         summary.errors += 1
-                        print(f"Out-of-order file in listing, skipped: {record['path']}")
+                        self.skips.add("out-of-order file in listing", record["path"], "out of order")
                         continue
                     mtime = mtime_from_ns(record["mtime_ns"])
                     pending.files.append(
@@ -187,6 +189,7 @@ class ServerImporter:
                     print(f"Import of {root_config.path} abandoned: {exc}")
         finally:
             db.close()
+        self.skips.summary()
         if summary.unrepresentable:
             out = self.config.filescan_folder / "server_unrepresentable_names.csv"
             out.parent.mkdir(parents=True, exist_ok=True)

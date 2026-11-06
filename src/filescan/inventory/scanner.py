@@ -11,7 +11,7 @@ from filescan.config import load_config
 from filescan.inventory.normalizer import normalize_path
 from filescan.inventory.volumes import root_problem
 from filescan.models import FileRecord, FolderRecord, ScanConfig
-from filescan.progress import progress_bar
+from filescan.progress import SkipLog, progress_bar
 from filescan.storage import FileRepository, SQLiteDB
 
 _MIN_FREE_DB_BYTES = 500 * 1024 * 1024  # 500 MB hard floor
@@ -23,14 +23,6 @@ def _is_link(entry: os.DirEntry) -> bool:
         return entry.is_symlink() or entry.is_junction()
     except OSError:
         return True
-
-
-# Windows error codes that are expected during a system-wide scan and logged silently.
-_SILENT_WINERRORS: frozenset[int] = frozenset({
-    2,   # ERROR_FILE_NOT_FOUND  — file disappeared between listing and stat
-    3,   # ERROR_PATH_NOT_FOUND  — path vanished mid-scan
-    5,   # ERROR_ACCESS_DENIED   — no permission to read folder/file
-})
 
 
 @dataclass(slots=True)
@@ -50,15 +42,14 @@ class InventoryScanner:
         self.delta = delta and not rescan  # rescan overrides delta
         self._logged_skips: set[tuple[str, Path, str]] = set()
         self._skip_paths = config.skip_paths
+        self.skips = SkipLog(config.filescan_folder, "scan")
 
     def _log_skip(self, *, kind: str, path: Path, exc: OSError) -> None:
-        if getattr(exc, "winerror", None) in _SILENT_WINERRORS:
-            return
         key = (kind, Path(path), str(exc))
         if key in self._logged_skips:
             return
         self._logged_skips.add(key)
-        print(f"Skipping {kind}: {path} ({exc})")
+        self.skips.add(kind, path, exc)
 
     def _safe_stat(self, path: Path, *, kind: str) -> object | None:
         try:
@@ -256,6 +247,7 @@ class InventoryScanner:
             indexed_files = 0
             skipped_folders = 0
             with progress_bar(desc=f"scan {root.name or root.drive}", total=folder_count, unit="folder") as bar:
+                self.skips.attach(bar)
                 with ThreadPoolExecutor(max_workers=self.config.worker_count) as pool:
                     while queue:
                         futures = {
@@ -312,6 +304,7 @@ class InventoryScanner:
                 indexed_files=indexed_files,
             )
         db.close()
+        self.skips.summary()
         return scan_run_id if scan_run_id is not None else latest_scan_run_id
 
 

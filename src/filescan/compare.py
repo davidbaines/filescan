@@ -21,7 +21,7 @@ from filescan.config import load_config
 from filescan.dedupe.hashing import full_hash
 from filescan.inventory.server_hash import HashRunner, ServerHasher
 from filescan.models import FileRecord, ScanConfig
-from filescan.progress import progress_bar
+from filescan.progress import SkipLog, progress_bar
 from filescan.storage import FileRepository, SQLiteDB
 from filescan.storage.sql import CLOUD_PLACEHOLDER_MASK
 
@@ -76,10 +76,11 @@ def _load_rows(db: SQLiteDB, config: ScanConfig) -> tuple[list[_Row], list[_Row]
     return pc_rows, server_rows
 
 
-def _hash_pc_files(db: SQLiteDB, rows: list[_Row], workers: int) -> None:
+def _hash_pc_files(db: SQLiteDB, rows: list[_Row], workers: int, skips: SkipLog) -> None:
     repo = FileRepository(db)
     with progress_bar(desc="compare hash pc", total=len(rows), unit="file") as bar, \
             ThreadPoolExecutor(max_workers=workers) as pool:
+        skips.attach(bar)
         futures = {pool.submit(full_hash, Path(row.path)): row for row in rows}
         done = 0
         for future in as_completed(futures):
@@ -88,7 +89,7 @@ def _hash_pc_files(db: SQLiteDB, rows: list[_Row], workers: int) -> None:
             try:
                 row.full_hash = future.result()
             except OSError as exc:
-                print(f"Skipping hash for {row.path}: {exc}")
+                skips.add("full hash", row.path, exc)
                 continue
             repo.upsert_file_hash(row.id, full_hash=row.full_hash, commit=False)
             done += 1
@@ -117,7 +118,9 @@ def run_compare_for_config(config: ScanConfig, *, server_runner: HashRunner | No
         print(f"{len(shared):,} sizes occur on both sides: {len(pc_todo):,} PC and "
               f"{len(server_todo):,} server files need hashing")
         if pc_todo:
-            _hash_pc_files(db, pc_todo, config.worker_count)
+            skips = SkipLog(config.filescan_folder, "compare")
+            _hash_pc_files(db, pc_todo, config.worker_count, skips)
+            skips.summary()
     finally:
         db.close()
 

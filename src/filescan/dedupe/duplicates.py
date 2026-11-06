@@ -9,7 +9,7 @@ from pathlib import Path
 from filescan.config import load_config
 from filescan.dedupe.hashing import full_hash, quick_hash
 from filescan.models import DuplicateGroup, FileRecord, ScanConfig
-from filescan.progress import progress_bar
+from filescan.progress import SkipLog, progress_bar
 from filescan.storage import FileRepository, SQLiteDB
 
 
@@ -51,6 +51,7 @@ class DuplicateDetector:
         self.reads = {"quick": 0, "full": 0}
         self.unreadable = 0
         self.changed: set[int | None] = set()
+        self.skips = SkipLog(config.filescan_folder, "duplicates")
 
     def _maybe_commit(self, repo: FileRepository, *, force: bool = False) -> None:
         if not self._pending:
@@ -67,8 +68,7 @@ class DuplicateDetector:
             self._last_commit = time.monotonic()
 
     def _log_hash_skip(self, path: Path, exc: OSError, *, full: bool) -> None:
-        hash_name = "full" if full else "quick"
-        print(f"Skipping {hash_name} hash for {path}: {exc}")
+        self.skips.add("full hash" if full else "quick hash", path, exc)
 
     @staticmethod
     def _is_server(path: Path, server_roots: list[Path]) -> bool:
@@ -99,6 +99,8 @@ class DuplicateDetector:
             if digest is None:
                 # Changed since the scan: a hash of the new content would be stored
                 # against the old size and date, so leave it for the next scan.
+                if file_record.id not in self.changed:
+                    self.skips.add("changed since the scan", file_record.path, "changed since the scan")
                 self.changed.add(file_record.id)
                 bar.update(1)
                 continue
@@ -144,6 +146,7 @@ class DuplicateDetector:
             progress_bar(desc="full hash (files read)", unit="file") as full_bar,
             ThreadPoolExecutor(max_workers=self.config.worker_count) as pool,
         ):
+            self.skips.attach(groups_bar)
             for size, count, _ in size_groups:
                 group = repo.files_of_size(size, hashed_only_roots=server_roots)
                 if all(f.full_hash is not None for f in group) or any(
@@ -185,6 +188,7 @@ class DuplicateDetector:
         repo.replace_duplicate_groups(confirmed_groups)
         repo.set_stage_scan_run_id("duplicates", latest_scan_run_id)
         db.close()
+        self.skips.summary()
         self._write_summary(files=total_candidate_files, unhashed=unhashed, groups=len(confirmed_groups))
         print(
             f"  Read {self.reads['quick']:,} quick and {self.reads['full']:,} full hashes; "
