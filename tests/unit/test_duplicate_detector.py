@@ -263,3 +263,81 @@ def test_no_write_transaction_is_left_open_between_batches(tmp_path, write_confi
         assert stored == 2 and not db.conn.in_transaction
     finally:
         db.close()
+
+
+def _config(tmp_path: Path, root: Path, db_name: str) -> ScanConfig:
+    return ScanConfig(
+        roots=[root],
+        filescan_folder=tmp_path / "filescan",
+        database_path=tmp_path / db_name,
+        report_path=tmp_path / "report.xlsx",
+        duplicate_size_threshold=1,
+    )
+
+
+def test_second_run_reads_nothing_and_records_what_it_read(tmp_path: Path, make_repo, monkeypatch) -> None:
+    import json
+
+    root = tmp_path / "root"
+    created = build_tree(root, {"a/x.bin": b"same", "b/y.bin": b"same", "c/z.bin": b"diff"})
+    db, repo = make_repo(tmp_path / "duplicates.db")
+    index_paths(repo, root, created)
+    config = _config(tmp_path, root, "duplicates.db")
+
+    DuplicateDetector(config).run()
+    first = json.loads(duplicate_module.summary_path(config).read_text(encoding="utf-8"))
+    assert first["files"] == 3 and first["unhashed_before"] == 3
+    assert first["quick_read"] == 3 and first["full_read"] == 2 and first["unreadable"] == 0
+
+    def refuse(path: Path) -> str:
+        raise AssertionError(f"{path} already has a hash and must not be read again")
+
+    monkeypatch.setattr(duplicate_module, "quick_hash", refuse)
+    monkeypatch.setattr(duplicate_module, "full_hash", refuse)
+    groups = DuplicateDetector(config, rescan=True).run()
+    assert [sorted(f.filename for f in g.files) for g in groups] == [["x.bin", "y.bin"]]
+    second = json.loads(duplicate_module.summary_path(config).read_text(encoding="utf-8"))
+    assert second["unhashed_before"] == 0 and second["quick_read"] == 0 and second["full_read"] == 0
+    db.close()
+
+
+def test_files_with_a_full_hash_are_not_given_a_quick_hash(tmp_path: Path, make_repo, monkeypatch) -> None:
+    """compare and the server branch store full hashes only; a quick hash on top would be a wasted read."""
+    from filescan.dedupe.hashing import full_hash as real_full_hash
+
+    root = tmp_path / "root"
+    created = build_tree(root, {"a/x.bin": b"same", "b/y.bin": b"same", "c/z.bin": b"diff"})
+    db, repo = make_repo(tmp_path / "duplicates.db")
+    index_paths(repo, root, created)
+    for record in repo.files_of_size(4):
+        repo.upsert_file_hash(record.id, full_hash=real_full_hash(record.path))
+
+    def refuse(path: Path) -> str:
+        raise AssertionError(f"{path} already has a full hash")
+
+    monkeypatch.setattr(duplicate_module, "quick_hash", refuse)
+    monkeypatch.setattr(duplicate_module, "full_hash", refuse)
+    groups = DuplicateDetector(_config(tmp_path, root, "duplicates.db")).run()
+    assert [sorted(f.filename for f in g.files) for g in groups] == [["x.bin", "y.bin"]]
+    assert db.conn.execute("SELECT COUNT(*) FROM file_hashes WHERE quick_hash IS NOT NULL").fetchone()[0] == 0
+    db.close()
+
+
+def test_unreadable_files_are_counted(tmp_path: Path, make_repo, monkeypatch) -> None:
+    import json
+
+    root = tmp_path / "root"
+    created = build_tree(root, {"a/x.bin": b"same", "b/locked.bin": b"same"})
+    db, repo = make_repo(tmp_path / "duplicates.db")
+    index_paths(repo, root, created)
+
+    def guarded(path: Path) -> str:
+        if path.name == "locked.bin":
+            raise PermissionError("simulated access denied")
+        return real_quick_hash(path)
+
+    monkeypatch.setattr(duplicate_module, "quick_hash", guarded)
+    config = _config(tmp_path, root, "duplicates.db")
+    DuplicateDetector(config).run()
+    assert json.loads(duplicate_module.summary_path(config).read_text(encoding="utf-8"))["unreadable"] == 1
+    db.close()

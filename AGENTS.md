@@ -26,7 +26,7 @@ filescan status                                  # where the work stands and wha
 filescan delete-folder "D:\Old" [--yes]          # report on whole PC folders; --yes deletes them and updates the database
 filescan --config config.yml run                 # older merge pipeline (non-destructive)
 filescan --config config.yml scan
-filescan --config config.yml duplicates
+filescan --config config.yml duplicates          # reads only files with no hash yet; --rescan rebuilds the groups
 filescan --config config.yml similarity
 filescan --config config.yml plan
 filescan --config config.yml report

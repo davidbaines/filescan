@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from filescan.cleanup.plan import gb
+from filescan.dedupe.duplicates import summary_path
 from filescan.inventory.volumes import root_problem
 from filescan.models import RootConfig, ScanConfig
 from filescan.progress import progress_bar
@@ -124,12 +125,33 @@ def _roots(status: Status, db: SQLiteDB, config: ScanConfig) -> None:
             status.todo.append(f"{'scan' if rc.location == 'pc' else 'import-server'}: {rc.path} was last "
                                f"scanned more than {config.scan_max_age.days} days ago.")
     latest = db.conn.execute("SELECT MAX(id) AS id FROM scan_runs").fetchone()["id"] or 0
-    dup = db.conn.execute("SELECT scan_run_id, updated_at FROM analysis_state WHERE stage = 'duplicates'").fetchone()
-    if dup and int(dup["scan_run_id"]) >= latest:
-        status.add(f"duplicates: up to date (hashed {_when(dup['updated_at'])})")
-    else:
+    stages = {row["stage"]: row for row in db.conn.execute("SELECT stage, scan_run_id, updated_at FROM analysis_state")}
+    dup, server = stages.get("duplicates"), stages.get("server-hashes")
+    if dup is None or int(dup["scan_run_id"]) < latest:
         status.add("duplicates: not run since the last scan")
         status.todo.append("duplicates: files have been scanned since the last hashing.")
+    elif server is not None and str(server["updated_at"]) > str(dup["updated_at"]):
+        status.add(f"duplicates: last run {_when(dup['updated_at'])}, before the server hashes of "
+                   f"{_when(server['updated_at'])}")
+        status.todo.append("duplicates --rescan: server hashes were added after the last run, so more PC files "
+                           "can be compared. Hashes already known are not read again.")
+    else:
+        status.add(f"duplicates: up to date (last run {_when(dup['updated_at'])})")
+    _duplicates_summary(status, config)
+
+
+def _duplicates_summary(status: Status, config: ScanConfig) -> None:
+    """What the last duplicates run read, from the summary it saves (counting it here would take minutes)."""
+    try:
+        summary = json.loads(summary_path(config).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    status.add(f"    {summary.get('files', 0):,} files share a size; {summary.get('unhashed_before', 0):,} had no hash "
+               f"before that run, which read {summary.get('quick_read', 0):,} quick and "
+               f"{summary.get('full_read', 0):,} full hashes")
+    if summary.get("unreadable"):
+        status.add(f"    {summary['unreadable']:,} files could not be read, so they have no hash; they are tried "
+                   "again on every run")
 
 
 def _reviews(status: Status, config: ScanConfig) -> None:

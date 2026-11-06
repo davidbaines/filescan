@@ -255,17 +255,19 @@ class FileRepository:
 
     def duplicate_size_groups(
         self, *, min_size: int = 1, hashed_only_roots: list[Path] = ()
-    ) -> list[tuple[int, int]]:
-        """Return (size, file_count) for every size shared by two or more active files.
+    ) -> list[tuple[int, int, int]]:
+        """Return (size, file_count, unhashed) for every size shared by two or more active files.
 
-        Cloud placeholders are left out. Files under `hashed_only_roots` (the
-        server) count only if they already have a full hash, because filescan
-        never reads server files itself.
+        `unhashed` counts the files with no hash at all, which are the ones the
+        next duplicates run must read. Cloud placeholders are left out. Files
+        under `hashed_only_roots` (the server) count only if they already have a
+        full hash, because filescan never reads server files itself.
         """
         outside, params = self._hashed_only_clause(list(hashed_only_roots))
         rows = self.db.conn.execute(
             f"""
-            SELECT files.size AS size, COUNT(*) AS file_count
+            SELECT files.size AS size, COUNT(*) AS file_count,
+                   SUM(file_hashes.quick_hash IS NULL AND file_hashes.full_hash IS NULL) AS unhashed
             FROM files
             JOIN folders ON folders.id = files.folder_id
             LEFT JOIN file_hashes ON file_hashes.file_id = files.id
@@ -280,7 +282,7 @@ class FileRepository:
             """,
             (min_size, CLOUD_PLACEHOLDER_MASK, *params),
         )
-        return [(int(row["size"]), int(row["file_count"])) for row in rows]
+        return [(int(row["size"]), int(row["file_count"]), int(row["unhashed"] or 0)) for row in rows]
 
     def files_of_size(self, size: int, *, hashed_only_roots: list[Path] = ()) -> list[FileRecord]:
         outside, params = self._hashed_only_clause(list(hashed_only_roots))

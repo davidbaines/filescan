@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -20,6 +21,13 @@ from filescan.storage import FileRepository, SQLiteDB
 _COMMIT_EVERY_ROWS = 500
 _COMMIT_EVERY_SECONDS = 5.0
 
+SUMMARY_FILE = "duplicates.json"
+
+
+def summary_path(config: ScanConfig) -> Path:
+    """Where each duplicates run records what it read; `filescan status` shows it."""
+    return config.filescan_folder / SUMMARY_FILE
+
 
 class DuplicateDetector:
     def __init__(self, config: ScanConfig, *, rescan: bool = False) -> None:
@@ -27,6 +35,8 @@ class DuplicateDetector:
         self.rescan = rescan
         self._pending: list[tuple[int, bool, str]] = []  # (file id, is full hash, digest)
         self._last_commit = time.monotonic()
+        self.reads = {"quick": 0, "full": 0}
+        self.unreadable = 0
 
     def _maybe_commit(self, repo: FileRepository, *, force: bool = False) -> None:
         if not self._pending:
@@ -69,8 +79,10 @@ class DuplicateDetector:
                 digest = future.result()
             except OSError as exc:
                 self._log_hash_skip(file_record.path, exc, full=full)
+                self.unreadable += 1
                 bar.update(1)
                 continue
+            self.reads["full" if full else "quick"] += 1
             setattr(file_record, attr, digest)
             if file_record.id is None:
                 raise ValueError("Hashed file must have an id.")
@@ -95,21 +107,31 @@ class DuplicateDetector:
         size_groups = repo.duplicate_size_groups(
             min_size=self.config.duplicate_size_threshold, hashed_only_roots=server_roots
         )
-        total_candidate_files = sum(count for _, count in size_groups)
-        print(f"  {len(size_groups):,} shared sizes covering {total_candidate_files:,} files")
+        total_candidate_files = sum(count for _, count, _ in size_groups)
+        unhashed = sum(n for _, _, n in size_groups)
+        print(
+            f"  {len(size_groups):,} shared sizes covering {total_candidate_files:,} files: "
+            f"{total_candidate_files - unhashed:,} already hashed, {unhashed:,} not hashed yet."
+        )
+        print(
+            "  Only files with no hash are read, plus a full hash where two quick hashes match."
+        )
 
         confirmed_groups: list[DuplicateGroup] = []
         with (
-            progress_bar(desc="duplicate size groups", total=total_candidate_files, unit="file") as groups_bar,
-            progress_bar(desc="quick hash", unit="file") as quick_bar,
-            progress_bar(desc="full hash", unit="file") as full_bar,
+            progress_bar(desc="size groups checked", total=len(size_groups), unit="group") as groups_bar,
+            progress_bar(desc="quick hash (files read)", unit="file") as quick_bar,
+            progress_bar(desc="full hash (files read)", unit="file") as full_bar,
             ThreadPoolExecutor(max_workers=self.config.worker_count) as pool,
         ):
-            for size, count in size_groups:
+            for size, count, _ in size_groups:
                 group = repo.files_of_size(size, hashed_only_roots=server_roots)
-                if any(self._is_server(f.path, server_roots) for f in group):
-                    # Server files carry only fsagent's full hash, so compare this
-                    # size group on full hashes; local files are hashed as needed.
+                if all(f.full_hash is not None for f in group) or any(
+                    self._is_server(f.path, server_roots) for f in group
+                ):
+                    # Compare on full hashes when every file already has one (nothing
+                    # to read), or when server files are present, since they carry
+                    # only fsagent's full hash; local files are hashed as needed.
                     candidates = [group]
                 else:
                     self._populate_hashes(repo, group, full=False, bar=quick_bar, pool=pool)
@@ -135,13 +157,35 @@ class DuplicateDetector:
                                     files=tuple(sorted(matches, key=lambda item: str(item.path))),
                                 )
                             )
-                groups_bar.update(count)
+                groups_bar.update(1)
 
         self._maybe_commit(repo, force=True)
         repo.replace_duplicate_groups(confirmed_groups)
         repo.set_stage_scan_run_id("duplicates", latest_scan_run_id)
         db.close()
+        self._write_summary(files=total_candidate_files, unhashed=unhashed, groups=len(confirmed_groups))
+        print(
+            f"  Read {self.reads['quick']:,} quick and {self.reads['full']:,} full hashes; "
+            f"{self.unreadable:,} files could not be read."
+        )
         return confirmed_groups
+
+    def _write_summary(self, *, files: int, unhashed: int, groups: int) -> None:
+        summary = {
+            "finished": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "files": files,
+            "unhashed_before": unhashed,
+            "quick_read": self.reads["quick"],
+            "full_read": self.reads["full"],
+            "unreadable": self.unreadable,
+            "duplicate_groups": groups,
+        }
+        try:
+            path = summary_path(self.config)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(summary, indent=1), encoding="utf-8")
+        except OSError as exc:
+            print(f"Could not save the run summary: {exc}")
 
 
 def run_duplicates(config_path: str | Path, *, rescan: bool = False) -> list[DuplicateGroup]:

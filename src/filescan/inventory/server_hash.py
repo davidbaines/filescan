@@ -107,6 +107,10 @@ class ServerHasher:
                     if summary.hashed % 500 == 0:
                         db.conn.commit()
                 db.conn.commit()
+            if summary.hashed:
+                # New server hashes can make more PC files comparable, so `status`
+                # compares this time with the last duplicates run.
+                repo.set_stage_scan_run_id("server-hashes", repo.latest_scan_run_id())
         finally:
             db.close()
         print(f"Server hashes stored: {summary.hashed:,}; stale: {summary.stale:,}; errors: {summary.errors:,}")

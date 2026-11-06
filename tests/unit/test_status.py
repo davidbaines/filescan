@@ -88,3 +88,34 @@ def test_status_lists_what_to_do(tmp_path):
     assert "review corpora: not started" in todo
     assert "cleanup-purge" in todo
     assert "layout.yml" in todo
+
+
+def test_status_shows_the_last_duplicates_run_and_newer_server_hashes(tmp_path):
+    from filescan.dedupe.duplicates import DuplicateDetector
+    from filescan.storage import FileRepository, SQLiteDB
+
+    pc = tmp_path / "pc"
+    (pc / "a").mkdir(parents=True)
+    (pc / "a" / "f.txt").write_text("x")
+    (pc / "a" / "g.txt").write_text("x")
+    fs = tmp_path / "fs"
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump({
+        "roots": [{"path": str(pc)}], "filescan_folder": str(fs), "database_folder": str(fs),
+        "database_filename": "db.sqlite", "report_filename": "r.xlsx", "min_file_size": 0,
+        "duplicate_size_threshold": 1,
+    }))
+    run_scan(config_path)
+    config = load_config(config_path)
+    DuplicateDetector(config).run()
+    text = "\n".join(gather(config).lines)
+    assert "duplicates: up to date" in text
+    assert "2 files share a size; 2 had no hash before that run" in text
+
+    db = SQLiteDB(config.database_path)
+    db.conn.execute("UPDATE analysis_state SET updated_at = '2026-01-01 00:00:00' WHERE stage = 'duplicates'")
+    db.conn.commit()
+    FileRepository(db).set_stage_scan_run_id("server-hashes", 1)
+    db.close()
+    todo = "\n".join(gather(config).todo)
+    assert "duplicates --rescan: server hashes were added after the last run" in todo
