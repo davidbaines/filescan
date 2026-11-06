@@ -188,6 +188,37 @@ Files are scattered across the PC (C: user folders, D:, E:, F:), the LaCie J: an
   - Against the targets: disk2 has 2,952 GB free, so 1.7 TB fits with room for kept Trash folders. On the PC, 629 GB of server-only data must come over; F: has 962 GB free before any cleanup.
   - Conclusion: the rules alone make the set fit, so no AI layer is needed for space. It could still help with sorting `Unsorted`.
 
+### Phase 4b: drive identity and more external drives
+
+Start after the first quarantine (Phase 6, "Review the first plan"), so the schema stays stable while a plan is in use. Two more drives are due: a WD My Book Black on USB (K:) and a networked WD My Book White.
+
+Decided on 6 November:
+
+- **The drive letter in the config stays a drive's name in the database.** Paths stay absolute (`J:\…`), so review decisions, exclusion patterns, pinned folders, `layout.yml` and existing plans keep working.
+- **No following a drive to another letter.** If a drive turns up on the wrong letter, filescan finds it by its marker file, names the letter it is on, and asks you to change it back in Disk Management. Until then, that root is skipped and its records are left unchanged, so no file is marked missing because its drive moved. Without translation there is nothing to time, so no speed test is needed.
+- **A marker file on each drive is its identity.** The file is `.filescan-volume.yaml` at the volume's root. It holds:
+  - a volume ID that filescan generates;
+  - the friendly name and the expected letter;
+  - the fingerprint: volume serial, size, label, filesystem, partition GUID where there is one, and the disk's model, serial and bus type;
+  - when it was written.
+
+  If a marker's fingerprint doesn't match the drive it sits on, it has been copied from another drive, for example by a drive clone or by the server mirror. filescan then treats the drive as unknown and says so.
+- **Network shares use the same marker.** The My Book White gets one at the root of its share. A share has no disk details, so the marker's volume ID is its identity.
+- **A reformatted drive is a new volume.** It has a new serial and no marker, so it is registered as a new drive.
+
+To build:
+
+- [x] Check each PC root's volume serial before scanning or cleanup, and skip a root on the wrong drive without marking its files missing. `filescan drives` lists the roots and their serials. Done 6 November; names and serials are in `C:\filescan\v2\config.yml`.
+- [ ] A `volumes` table: volume ID, fingerprint, expected letter, the letter last seen and when. The config holds what you declare (letter, name, volume ID); the database holds what filescan observes.
+- [ ] `filescan drives` lists every connected volume, with its letter, size, label, model and bus type, and marks the ones the config doesn't know. For a new one it asks for a friendly name, writes the marker and adds the root to `config.yml`. It also takes a one-line form, `drives --add K: --name "WD My Book Black"`.
+  - Insert the new lines as text, keeping your comments. Back up the config and show the change before writing.
+- [ ] The scan and the cleanup commands check the marker rather than only the serial. A root on the wrong letter is skipped with a message naming the letter it is on now.
+- [ ] Leave markers out of the inventory, out of the master build and out of the PC → disk2 mirror.
+- [ ] C: is the system drive, and writing to `C:\` needs an elevated terminal. Decide whether C: gets a marker, written once from an elevated terminal, or is checked by serial only. It never changes letter.
+- [ ] A way to retire a drive that has gone for good or been reformatted, such as `drives --retire "LaCie Quadra"`. It marks the drive's files missing, so they no longer count as copies.
+- [ ] **[USER]** Give the WD My Book Black the letter K: in Disk Management, then register it with `drives`, scan it and run `duplicates`.
+- [ ] **[USER]** Check whether Explorer can open the My Book White's share. Older models only offer SMB1, which Windows 10 turns off. If so, choose between turning on the SMB1 client for the copy and mounting the share on the server for `fsagent` to list.
+
 ### Phase 5: build the server master on disk2
 
 - [ ] **[USER]** Write `layout.yml`, mapping each source top folder to a category. Anything unmapped goes to `Unsorted/<origin>`.
