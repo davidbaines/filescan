@@ -9,6 +9,7 @@ from pathlib import Path
 
 from filescan.config import load_config
 from filescan.inventory.normalizer import normalize_path
+from filescan.inventory.volumes import root_problem
 from filescan.models import FileRecord, FolderRecord, ScanConfig
 from filescan.progress import progress_bar
 from filescan.storage import FileRepository, SQLiteDB
@@ -224,8 +225,12 @@ class InventoryScanner:
         )
 
         # Server roots are listed by the server helper, never walked over SMB.
-        for root in self.config.pc_roots:
-            if not root.is_dir():
+        for root_config in self.config.pc_root_configs:
+            root = root_config.path
+            problem = root_problem(root_config)
+            if problem:
+                # Its records stay as they are, so its files still count as copies.
+                print(f"Skipping: {problem}. Its records are left unchanged.")
                 continue
             existing_stats = repo.get_scan_stats(root)
             if existing_stats is not None and not self.rescan and not self.delta:

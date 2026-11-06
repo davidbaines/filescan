@@ -29,6 +29,7 @@ filescan --config config.yml execute --plan /path/to/plan.json
 filescan --config config.yml waste
 filescan --config config.yml largest
 filescan --config config.yml merge-review
+filescan --config config.yml drives              # check each PC root is on the right drive (volume serial)
 filescan --config config.yml import-server       # list server roots with fsagent over SSH
 filescan --config config.yml exclusions-report   # CSV of what each exclusion rule leaves out
 filescan --config config.yml compare             # PC files with no identical copy on the server

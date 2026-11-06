@@ -33,6 +33,8 @@ class RootConfig:
     skip: tuple[Path, ...] = ()
     server_path: str | None = None  # POSIX mount point of a server root
     exclude_dirs: tuple[str, ...] = ()  # folder names fsagent leaves out, e.g. lost+found
+    name: str = ""  # friendly name, e.g. LaCie Quadra
+    serial: str = ""  # volume serial number as `vol` shows it, e.g. A1B2-C3D4; checked before scanning
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +93,10 @@ class ScanConfig:
     @property
     def pc_roots(self) -> list[Path]:
         return [rc.path for rc in self._configs() if rc.location == "pc"]
+
+    @property
+    def pc_root_configs(self) -> list[RootConfig]:
+        return [rc for rc in self._configs() if rc.location == "pc"]
 
     @property
     def server_roots(self) -> list[Path]:

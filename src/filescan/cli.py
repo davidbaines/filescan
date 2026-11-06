@@ -3,8 +3,13 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from filescan.cleanup.plan import run_cleanup_plan
+from filescan.cleanup.quarantine import (run_cleanup, run_cleanup_purge,
+                                         run_cleanup_restore)
 from filescan.cleanup.unwanted import run_unwanted_report
-from filescan.cleanup.waste_detector import find_waste_candidates, print_waste_report, write_waste_shortcuts
+from filescan.cleanup.waste_detector import (find_waste_candidates,
+                                             print_waste_report,
+                                             write_waste_shortcuts)
 from filescan.compare import run_compare, run_hash_server
 from filescan.config import load_config
 from filescan.dedupe.duplicates import run_duplicates
@@ -12,13 +17,13 @@ from filescan.execution.mover import run_execution
 from filescan.inventory.preflight import check_db_space, check_stale_roots
 from filescan.inventory.scanner import run_scan
 from filescan.inventory.server_import import run_import_server
+from filescan.inventory.volumes import run_drives
 from filescan.planning.artifacts import load_plan_artifact
 from filescan.planning.proposals import build_plan_artifact
-from filescan.cleanup.plan import run_cleanup_plan
-from filescan.cleanup.quarantine import run_cleanup, run_cleanup_purge, run_cleanup_restore
 from filescan.reporting.exclusions import run_exclusions_report
+from filescan.reporting.largest_files import (_fmt_size, find_large_files,
+                                              run_largest)
 from filescan.reporting.measure import run_measure
-from filescan.reporting.largest_files import _fmt_size, find_large_files, run_largest
 from filescan.reporting.xlsx import write_report
 from filescan.review.app import run_review
 from filescan.similarity.clusters import dump_clusters_json, find_clusters
@@ -79,6 +84,10 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "measure",
         help="Phase 4 checkpoint: distinct size of the organised set, against PC and server disk space.",
+    )
+    subparsers.add_parser(
+        "drives",
+        help="Show each PC root's drive, its volume serial number and whether the right drive is connected.",
     )
     review_parser = subparsers.add_parser(
         "review",
@@ -270,6 +279,8 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "measure":
         _stage_start("measure")
         run_measure(args.config)
+    elif args.command == "drives":
+        run_drives(config)
     elif args.command == "review":
         _stage_start("review")
         run_review(args.config, args.scope, split_gb=args.split_gb)

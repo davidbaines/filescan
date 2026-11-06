@@ -81,6 +81,8 @@ def _parse_root(item: dict[str, Any]) -> RootConfig:
         skip=skip,
         server_path=str(server_path).rstrip("/") if server_path else None,
         exclude_dirs=exclude_dirs,
+        name=str(item.get("name") or ""),
+        serial=str(item.get("serial") or "").strip().upper(),
     )
 
 

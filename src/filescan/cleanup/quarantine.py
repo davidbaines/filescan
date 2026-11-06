@@ -35,6 +35,7 @@ from filescan.cleanup.plan import PlanEntry, gb, read_plan, root_configs, root_f
 from filescan.config import load_config
 from filescan.inventory.server_hash import WORK_DIR, unc_to_posix
 from filescan.inventory.server_import import FSAGENT
+from filescan.inventory.volumes import root_problem
 from filescan.models import QUARANTINE_DIR, RootConfig, ScanConfig
 from filescan.progress import progress_bar
 from filescan.storage import SQLiteDB
@@ -146,13 +147,24 @@ def reason_matches(entry_reason: str, wanted: str | None) -> bool:
 def _jobs(entries: list[PlanEntry], config: ScanConfig, only: str | None,
           reason: str | None = None) -> list[tuple[PlanEntry, RootConfig]]:
     roots = root_configs(config)
+    problems: dict[RootConfig, str | None] = {}
+    skipped: Counter = Counter()
     jobs = []
     for e in entries:
         if (only and e.location != only) or not reason_matches(e.reason, reason):
             continue
         root = root_for(e.path, roots)
-        if root is not None:
-            jobs.append((e, root))
+        if root is None:
+            continue
+        if root.location == "pc":
+            if root not in problems:
+                problems[root] = root_problem(root)
+            if problems[root]:
+                skipped[problems[root]] += 1
+                continue
+        jobs.append((e, root))
+    for problem, n in skipped.items():
+        print(f"Skipping {n:,} files: {problem}.")
     return jobs
 
 
@@ -257,7 +269,10 @@ def restore(config: ScanConfig, plan_path: Path, *, only: str | None = None,
     return counts
 
 
-def _copy_still_there(entry: PlanEntry) -> bool:
+def _copy_still_there(entry: PlanEntry, roots: list[RootConfig] | None = None) -> bool:
+    copy_root = root_for(entry.copy_path, roots or [])
+    if copy_root is not None and copy_root.location == "pc" and copy_root.serial and root_problem(copy_root):
+        return False  # the right drive is not on that letter, so the copy cannot be confirmed
     try:
         return Path(entry.copy_path).stat().st_size == entry.size
     except OSError:
@@ -278,7 +293,7 @@ def purge(config: ScanConfig, plan_path: Path, *, older_than_days: float = 14, y
         if datetime.fromisoformat(state["at"]) > cutoff:
             held["in quarantine for less than the waiting period"] += 1
             continue
-        if entry.status == "covered" and not _copy_still_there(entry):
+        if entry.status == "covered" and not _copy_still_there(entry, root_configs(config)):
             held["its copy is no longer there"] += 1
             continue
         jobs.append((entry, root, {"op": "purge", "path": quarantine_path(entry.path, root, folder.name),
