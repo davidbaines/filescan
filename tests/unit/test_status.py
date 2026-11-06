@@ -119,3 +119,20 @@ def test_status_shows_the_last_duplicates_run_and_newer_server_hashes(tmp_path):
     db.close()
     todo = "\n".join(gather(config).todo)
     assert "duplicates --rescan: server hashes were added after the last run" in todo
+
+
+def test_status_counts_only_layout_entries_marked_as_guesses(tmp_path):
+    fs = tmp_path / "fs"
+    fs.mkdir()
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump({
+        "roots": [{"path": str(tmp_path)}], "filescan_folder": str(fs), "database_folder": str(fs),
+        "database_filename": "db.sqlite", "report_filename": "r.xlsx",
+    }))
+    (fs / "layout.yml").write_text(
+        "# Lines marked  # ?  are guesses that need your decision.\n"
+        "map:\n"
+        "  'E:/Picasa': Photos/Picasa\n"
+        "  'E:/Odd': Unsorted/Odd   # ? maybe Work\n", encoding="utf-8")
+    text = "\n".join(gather(load_config(config_path)).lines)
+    assert "1 entries marked '# ?'" in text

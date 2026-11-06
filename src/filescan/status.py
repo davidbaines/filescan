@@ -239,7 +239,9 @@ def _layout(status: Status, config: ScanConfig) -> None:
         status.add(f"{layout} does not exist yet")
         status.todo.append("layout.yml: write the map from source folders to categories.")
         return
-    open_items = sum(1 for line in layout.read_text(encoding="utf-8").splitlines() if "# ?" in line)
+    # Count entries only: a line that is wholly a comment may mention the marker to explain it.
+    open_items = sum(1 for line in layout.read_text(encoding="utf-8").splitlines()
+                     if "# ?" in line and not line.lstrip().startswith("#"))
     status.add(f"{layout}: {open_items} entries marked '# ?' still need a decision")
     status.add("build-plan, verify-coverage and pc-plan are not built yet")
     if open_items:
