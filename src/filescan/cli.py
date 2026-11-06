@@ -36,35 +36,54 @@ def _stage_start(name: str) -> None:
     print(f"Current process: {name}")
 
 
+EPILOG = 'Usual order:\n  scan, import-server, duplicates, hash-server   build and hash the inventory\n  review <scope>                                 keep or trash excluded folders\n  cleanup-plan, cleanup --dry-run, cleanup       move trash to quarantine\n  cleanup-restore / cleanup-purge --yes          undo, or delete after 14 days\n\nRun "filescan <command> -h" for a command\'s options. Example:\n  poetry run filescan --config C:\\filescan\\v2\\config.yml duplicates --rescan'
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="filescan")
-    parser.add_argument("--config", type=Path, default=Path("config.yml"))
+    parser = argparse.ArgumentParser(
+        prog="filescan",
+        description="Inventory, compare and tidy files on the PC and the server. Nothing is deleted "
+        "except by cleanup-purge --yes.",
+        epilog=EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--config", type=Path, default=Path("config.yml"),
+                        help="Configuration file (default: config.yml in the current folder).")
     parser.add_argument("--rescan", action="store_true", help="Re-run scan and analysis stages instead of reusing existing results.")
-    subparsers = parser.add_subparsers(dest="command", required=False)
+    subparsers = parser.add_subparsers(dest="command", required=False, metavar="command",
+                                       title="commands", description="With no command, filescan runs 'run'.")
 
     run_parser = subparsers.add_parser("run", help="Run scan, duplicates, similarity, plan, and report in sequence.")
     run_parser.add_argument("--rescan", action="store_true", help="Re-run scan and analysis stages instead of reusing existing results.")
     run_parser.add_argument("--replan", action="store_true", help="Recreate the plan artifact even if the current one can be reused.")
 
-    scan_parser = subparsers.add_parser("scan")
+    scan_parser = subparsers.add_parser(
+        "scan", help="Walk the PC roots and record every folder and file (size, dates) in the database.")
     scan_parser.add_argument("--rescan", action="store_true", help="Re-scan roots even if they were already scanned.")
     scan_parser.add_argument("--delta", action="store_true", help="Fast update: skip folders whose mtime is unchanged since last scan. Misses files edited in place; use --rescan before comparing or hashing.")
 
-    duplicates_parser = subparsers.add_parser("duplicates")
-    duplicates_parser.add_argument("--rescan", action="store_true", help="Rebuild duplicate analysis even if cached results exist.")
+    duplicates_parser = subparsers.add_parser(
+        "duplicates", help="Hash files that share a size and record groups of identical files.")
+    duplicates_parser.add_argument(
+        "--rescan", action="store_true",
+        help="Run even if no scan has happened since last time. Existing hashes are kept; "
+        "only files without one are hashed.")
 
-    similarity_parser = subparsers.add_parser("similarity")
+    similarity_parser = subparsers.add_parser(
+        "similarity", help="Find pairs of folders with similar contents (candidates for merging).")
     similarity_parser.add_argument("--rescan", action="store_true", help="Rebuild folder similarity analysis even if cached results exist.")
 
-    plan_parser = subparsers.add_parser("plan")
+    plan_parser = subparsers.add_parser(
+        "plan", help="Turn duplicates and similar folders into merge proposals (a plan file, for review).")
     plan_parser.add_argument("--replan", action="store_true", help="Recreate the plan artifact even if the current one can be reused.")
 
-    execute_parser = subparsers.add_parser("execute")
-    execute_parser.add_argument("--plan", type=Path, required=True)
+    execute_parser = subparsers.add_parser(
+        "execute", help="Carry out the approved proposals in a merge plan (copies, verified by hash).")
+    execute_parser.add_argument("--plan", type=Path, required=True, help="The approved plan file.")
 
-    subparsers.add_parser("report")
-    subparsers.add_parser("waste")
-    subparsers.add_parser("largest")
+    subparsers.add_parser("report", help="Write the Excel report of duplicates, similar folders and proposals.")
+    subparsers.add_parser("waste", help="Find junk and cache folders by name and report them.")
+    subparsers.add_parser("largest", help="List the largest files in the inventory.")
     subparsers.add_parser(
         "import-server",
         help="List the server roots with fsagent over SSH and load them into the database.",
@@ -110,22 +129,22 @@ def build_parser() -> argparse.ArgumentParser:
         "cleanup", help="Move the files in a reviewed cleanup plan to quarantine on the same disk (reversible)."
     )
     cq.add_argument("--plan", required=True, help="Plan folder (or its files.csv) from cleanup-plan.")
-    cq.add_argument("--only", choices=("pc", "server"))
+    cq.add_argument("--only", choices=("pc", "server"), help="Only PC files or only server files.")
     cq.add_argument("--dry-run", action="store_true", help="Count what would move; move nothing.")
     cq.add_argument("--reason", help="Only this reason from the plan, e.g. review:server-trash, or a prefix such as rule:")
     cr = subparsers.add_parser("cleanup-restore", help="Put quarantined files from a plan back where they were.")
-    cr.add_argument("--plan", required=True)
-    cr.add_argument("--only", choices=("pc", "server"))
-    cr.add_argument("--reason")
+    cr.add_argument("--plan", required=True, help="Plan folder (or its files.csv) from cleanup-plan.")
+    cr.add_argument("--only", choices=("pc", "server"), help="Only PC files or only server files.")
+    cr.add_argument("--reason", help="Only this reason from the plan, e.g. review:app-caches, or a prefix such as rule:")
     cx = subparsers.add_parser(
         "cleanup-purge", help="Delete a plan's quarantined files for good, after a waiting period. Needs --yes."
     )
-    cx.add_argument("--plan", required=True)
-    cx.add_argument("--only", choices=("pc", "server"))
+    cx.add_argument("--plan", required=True, help="Plan folder (or its files.csv) from cleanup-plan.")
+    cx.add_argument("--only", choices=("pc", "server"), help="Only PC files or only server files.")
     cx.add_argument("--older-than-days", type=float, default=14.0,
                     help="Only files quarantined at least this long ago (default 14).")
     cx.add_argument("--yes", action="store_true", help="Really delete. Without it, only report what would go.")
-    cx.add_argument("--reason")
+    cx.add_argument("--reason", help="Only this reason from the plan, or a prefix such as rule:")
     clusters_parser = subparsers.add_parser("clusters", help="Debug: dump folder clusters as JSON.")
     clusters_parser.add_argument("--show-suppressed", action="store_true", help="Include hierarchy-suppressed clusters.")
 
