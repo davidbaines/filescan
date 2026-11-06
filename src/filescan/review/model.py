@@ -26,7 +26,6 @@ from pathlib import PureWindowsPath
 from filescan.exclusion_index import classify_folders, first_rule, is_doomed
 from filescan.models import ExclusionRule, ScanConfig
 from filescan.storage import SQLiteDB
-from filescan.storage.sql import path_prefix
 
 SEP = "\\"
 TREE, FILES = "tree", "files"
@@ -142,21 +141,45 @@ def scope_roots(db: SQLiteDB, config: ScanConfig, scope: str,
 
 
 def load_files(db: SQLiteDB, roots: Iterable[str]) -> dict[str, list[ReviewFile]]:
-    """Every active file under each root, keyed by root."""
-    result: dict[str, list[ReviewFile]] = {}
-    for root in roots:
-        exact, like = path_prefix(PureWindowsPath(root))
-        rows = db.conn.execute(
-            """
-            SELECT f.path, fo.path AS folder, f.size, h.full_hash
-            FROM folders fo
-            JOIN files f ON f.folder_id = fo.id
-            LEFT JOIN file_hashes h ON h.file_id = f.id
-            WHERE (fo.path = ? OR fo.path LIKE ? ESCAPE '|') AND fo.is_missing = 0 AND f.is_missing = 0
-            """,
-            (exact, like),
-        )
-        result[root] = [ReviewFile(r["path"], r["folder"], int(r["size"]), r["full_hash"]) for r in rows]
+    """Every active file under each root, keyed by root.
+
+    One pass over the folders assigns each to its root, then one join reads the
+    files. A LIKE query per root read every folder once per root, which took
+    hours for scopes such as app-caches with thousands of roots.
+    """
+    roots = list(roots)
+    result: dict[str, list[ReviewFile]] = {root: [] for root in roots}
+    if not roots:
+        return result
+    lookup = {root.rstrip(SEP).lower(): root for root in roots}
+    db.conn.execute("CREATE TEMP TABLE IF NOT EXISTS review_folders (folder_id INTEGER PRIMARY KEY, root TEXT)")
+    db.conn.execute("DELETE FROM review_folders")
+    batch: list[tuple[int, str]] = []
+    for row in db.conn.execute("SELECT id, path FROM folders WHERE is_missing = 0").fetchall():
+        path = row["path"].rstrip(SEP).lower()
+        while path:
+            root = lookup.get(path)
+            if root is not None:
+                batch.append((int(row["id"]), root))
+                break
+            cut = path.rfind(SEP)
+            if cut < 0:
+                break
+            path = path[:cut]
+    db.conn.executemany("INSERT INTO review_folders VALUES (?, ?)", batch)
+    rows = db.conn.execute(
+        """
+        SELECT t.root, f.path, fo.path AS folder, f.size, h.full_hash
+        FROM review_folders t
+        JOIN folders fo ON fo.id = t.folder_id
+        JOIN files f ON f.folder_id = fo.id
+        LEFT JOIN file_hashes h ON h.file_id = f.id
+        WHERE f.is_missing = 0
+        """
+    )
+    for r in rows:
+        result[r["root"]].append(ReviewFile(r["path"], r["folder"], int(r["size"]), r["full_hash"]))
+    db.conn.execute("DELETE FROM review_folders")
     return result
 
 
