@@ -319,3 +319,51 @@ def test_decisions_survive_a_locked_database(tmp_path):
     finally:
         blocker.close()
         db.close()
+
+
+def test_filter_then_mark_all_shown_needs_a_second_press(tmp_path):
+    files = {T + r"\Old\a\x.bin": (50, None), T + r"\Old\b\y.bin": (40, None), T + r"\New\z.bin": (30, None)}
+    session, db = _session(tmp_path, files, split_gb=1e-8)
+
+    async def drive() -> None:
+        app = ReviewApp(session, open_command=["cmd", "/c", "rem"])
+        async with app.run_test() as pilot:
+            await pilot.press("slash")
+            await pilot.press(*"old")
+            await pilot.press("enter")
+            await pilot.pause()
+            assert {u.path for u in app.shown} == {T + r"\Old\a", T + r"\Old\b"}
+            await pilot.press("T")
+            await pilot.pause()
+            assert session.stored_decisions() == {}
+            await pilot.press("T")
+            await pilot.pause()
+            await pilot.press("escape")
+            await pilot.pause()
+            assert len(app.shown) == len(session.units)
+
+    try:
+        asyncio.run(drive())
+        assert session.stored_decisions() == {
+            ((T + r"\Old\a").lower(), TREE): TRASH, ((T + r"\Old\b").lower(), TREE): TRASH}
+    finally:
+        db.close()
+
+
+def test_totals_stay_correct_after_incremental_decisions(tmp_path):
+    from filescan.review.model import distinct_unique_bytes
+
+    files = {T + r"\a\x.bin": (50, "h1"), T + r"\b\x.bin": (50, "h1"), T + r"\c\y.bin": (30, "h2")}
+    session, db = _session(tmp_path, files, split_gb=1e-8)
+    try:
+        units = {u.path: u for u in session.units}
+        session.decide(units[T + r"\a"], KEEP)
+        session.decide(units[T + r"\c"], TRASH)
+        session.clear(units[T + r"\a"])
+        session.decide(units[T + r"\b"], KEEP)
+        t = session.totals()
+        assert t["keep"] == distinct_unique_bytes(session.units, KEEP) == 50
+        assert t["trash"] == distinct_unique_bytes(session.units, TRASH) == 30
+        assert units[T + r"\a"].unique_bytes == 0  # its content is kept in b
+    finally:
+        db.close()

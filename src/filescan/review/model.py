@@ -63,7 +63,7 @@ class Unit:
     suggestion: Suggestion | None = None
     decision: str | None = None
     unique_bytes: int = 0
-    _unique_content: dict[str, int] = field(default_factory=dict)
+    _unique_content: dict[str, int] | None = None  # built once: each file's `unique` is fixed after loading
 
     @property
     def key(self) -> tuple[str, str]:
@@ -325,16 +325,30 @@ def recompute_unique(units: list[Unit]) -> None:
     kept_by_decision: set[str] = set()
     for unit in units:
         if unit.decision == KEEP:
-            kept_by_decision.update(f.content_key for f in unit.files if f.unique)
+            kept_by_decision.update(unit_content(unit))
     for unit in units:
-        content: dict[str, int] = {}
-        for f in unit.files:
-            if f.unique:
-                content[f.content_key] = f.size
-        unit._unique_content = content
-        unit.unique_bytes = sum(
-            size for key, size in content.items() if unit.decision == KEEP or key not in kept_by_decision
-        )
+        content = unit_content(unit)
+        if unit.decision == KEEP or not kept_by_decision:
+            unit.unique_bytes = sum(content.values())
+        else:
+            unit.unique_bytes = sum(size for key, size in content.items() if key not in kept_by_decision)
+
+
+def unit_content(unit: Unit) -> dict[str, int]:
+    """The unit's unique content, content key -> size, built on first use."""
+    if unit._unique_content is None:
+        unit._unique_content = {f.content_key: f.size for f in unit.files if f.unique}
+    return unit._unique_content
+
+
+def totals_by_decision(units: Iterable[Unit]) -> dict[str | None, int]:
+    """Distinct unique bytes for all units ("any") and per decision (keep, trash, None), in one pass."""
+    content: dict[str | None, dict[str, int]] = {"any": {}, KEEP: {}, TRASH: {}, None: {}}
+    for unit in units:
+        mine = unit_content(unit)
+        content["any"].update(mine)
+        content.setdefault(unit.decision, {}).update(mine)
+    return {decision: sum(c.values()) for decision, c in content.items()}
 
 
 def distinct_unique_bytes(units: Iterable[Unit], decision: str | None = "any") -> int:
@@ -343,9 +357,7 @@ def distinct_unique_bytes(units: Iterable[Unit], decision: str | None = "any") -
     for unit in units:
         if decision != "any" and unit.decision != decision:
             continue
-        for f in unit.files:
-            if f.unique:
-                content[f.content_key] = f.size
+        content.update(unit_content(unit))
     return sum(content.values())
 
 

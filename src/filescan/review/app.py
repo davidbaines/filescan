@@ -3,7 +3,8 @@
 Keys (also shown as clickable buttons):
   k keep    t trash    a accept the suggestion    A accept every suggestion (press twice)
   o open in Explorer    s split into subfolders    u undo    n next undecided
-  h hide decided    q quit
+  h hide decided    / filter by path    T or K mark every undecided folder shown (press twice)
+  q quit
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from pathlib import PureWindowsPath
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Grid, Horizontal, Vertical
-from textual.widgets import Button, Footer, Header, Label, ListItem, ListView, Static
+from textual.widgets import Button, Footer, Header, Input, Label, ListItem, ListView, Static
 
 from filescan.review.model import FILES, KEEP, TRASH, Unit, short_path
 from filescan.review.session import ReviewSession
@@ -80,6 +81,10 @@ class ReviewApp(App[None]):
         Binding("u", "undo", "Undo"),
         Binding("n", "next_undecided", "Next undecided"),
         Binding("h", "toggle_hide", "Hide decided"),
+        Binding("slash", "filter", "Filter"),
+        Binding("T", "trash_shown", "Trash all shown", show=False),
+        Binding("K", "keep_shown", "Keep all shown", show=False),
+        Binding("escape", "clear_filter", "Clear filter", show=False),
         Binding("q", "quit", "Quit"),
     ]
     DEFAULT_CSS = """
@@ -92,6 +97,8 @@ class ReviewApp(App[None]):
     #buttons { height: 6; grid-size: 3 2; grid-gutter: 0 1; }
     #buttons Button { width: 100%; min-width: 6; }
     #summary { height: 1; background: $accent; color: $text; padding: 0 1; }
+    #filter { display: none; }
+    #filter.shown { display: block; }
     """
 
     def __init__(self, session: ReviewSession, *, open_command: list[str] | None = None) -> None:
@@ -101,11 +108,15 @@ class ReviewApp(App[None]):
         self.hide_decided = False
         self.shown: list[Unit] = []
         self._accept_all_armed = False
+        self.filter_text = ""
+        self._bulk_armed: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
         with Horizontal(id="main"):
             with Vertical(id="left"):
+                yield Input(placeholder="Show folders whose path contains... (Enter to apply, Esc to clear)",
+                            id="filter")
                 yield Static("        unique    total     (→t: suggested trash)", id="columns")
                 yield ListView(id="units")
             with Vertical(id="side"):
@@ -123,6 +134,7 @@ class ReviewApp(App[None]):
     def on_mount(self) -> None:
         self.sub_title = f"scope: {self.session.scope}. Decisions are recorded only; nothing is deleted here."
         self._rebuild(0)
+        self.query_one("#units", ListView).focus()
         self.set_interval(5, self._save_pending)
 
     def _save_pending(self) -> None:
@@ -132,7 +144,9 @@ class ReviewApp(App[None]):
     # ------------------------------------------------------------ helpers
 
     def _rebuild(self, index: int = 0, select: Unit | None = None) -> None:
-        self.shown = [u for u in self.session.units if not (self.hide_decided and u.decision)]
+        needle = self.filter_text.lower()
+        self.shown = [u for u in self.session.units
+                      if not (self.hide_decided and u.decision) and needle in u.path.lower()]
         lv = self.query_one("#units", ListView)
         lv.clear()
         width = self._label_width()
@@ -154,8 +168,9 @@ class ReviewApp(App[None]):
         unit = self._current()
         self.query_one("#detail", Static).update(unit_detail(unit) if unit else "Nothing to review.")
         t = self.session.totals()
+        shown = f"   [b]filter: {self.filter_text!r}, {len(self.shown):,} shown[/]" if self.filter_text else ""
         self.query_one("#summary", Static).update(
-            f"{t['decided']:,}/{t['units']:,} decided   unique: {gb(t['unique'])}   "
+            f"{t['decided']:,}/{t['units']:,} decided{shown}   unique: {gb(t['unique'])}   "
             f"keep {gb(t['keep'])}   trash {gb(t['trash'])}   undecided {gb(t['undecided'])}"
             + (f"   [b]{len(self.session.pending)} waiting for the database (safe in the journal)[/]"
                if self.session.pending else "")
@@ -166,9 +181,14 @@ class ReviewApp(App[None]):
         available = lv.size.width or (self.size.width * 3) // 5
         return max(20, available - _LABEL_PREFIX)
 
-    def _relabel(self) -> None:
+    def _relabel(self, only: Unit | None = None) -> None:
         lv = self.query_one("#units", ListView)
         width = self._label_width()
+        if only is not None:
+            if only in self.shown:
+                item = lv.children[self.shown.index(only)]
+                item.query_one(Label).update(unit_label(only, width))
+            return
         for item, unit in zip(lv.children, self.shown):
             item.query_one(Label).update(unit_label(unit, width))
 
@@ -189,11 +209,11 @@ class ReviewApp(App[None]):
         unit = self._current()
         if unit is None:
             return
-        self.session.decide(unit, decision)
+        others_changed = self.session.decide(unit, decision)
         if self.hide_decided:
             self._rebuild(self.query_one("#units", ListView).index or 0)
         else:
-            self._relabel()
+            self._relabel(None if others_changed else unit)
             self._advance()
         self._refresh()
 
@@ -234,9 +254,7 @@ class ReviewApp(App[None]):
             self.notify(f"Press A again to accept the suggestion for {len(todo)} folders.")
             return
         self._accept_all_armed = False
-        for unit in todo:
-            self.session.decide(unit, unit.suggestion.decision, save=False)
-        self.session.save()
+        self.session.decide_many(todo, [u.suggestion.decision for u in todo])
         self._rebuild(self.query_one("#units", ListView).index or 0)
         self.notify(f"Accepted {len(todo)} suggestions. Press u on any of them to undo it.")
 
@@ -244,8 +262,8 @@ class ReviewApp(App[None]):
         unit = self._current()
         if unit is None or unit.decision is None:
             return
-        self.session.clear(unit)
-        self._relabel()
+        others_changed = self.session.clear(unit)
+        self._relabel(None if others_changed else unit)
         self._refresh()
 
     def action_open(self) -> None:
@@ -279,6 +297,49 @@ class ReviewApp(App[None]):
     def action_toggle_hide(self) -> None:
         self.hide_decided = not self.hide_decided
         self._rebuild(select=self._current())
+
+    def action_filter(self) -> None:
+        box = self.query_one("#filter", Input)
+        box.add_class("shown")
+        box.value = self.filter_text
+        box.focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self._apply_filter(event.value.strip())
+
+    def _apply_filter(self, text: str) -> None:
+        box = self.query_one("#filter", Input)
+        self.filter_text = text
+        self._bulk_armed = None
+        if not text:
+            box.remove_class("shown")
+        self._rebuild(select=self._current())
+        self.query_one("#units", ListView).focus()
+
+    def action_clear_filter(self) -> None:
+        self._apply_filter("")
+
+    def _mark_shown(self, decision: str) -> None:
+        todo = [u for u in self.shown if u.decision is None]
+        if not todo:
+            self.notify("Every folder shown already has a decision.")
+            return
+        word, key = ("trash", "T") if decision == TRASH else ("keep", "K")
+        if self._bulk_armed != decision:
+            self._bulk_armed = decision
+            size = gb(sum(u.total_bytes for u in todo))
+            self.notify(f"Press {key} again to mark the {len(todo):,} undecided folders shown ({size}) as {word}.")
+            return
+        self._bulk_armed = None
+        self.session.decide_many(todo, [decision] * len(todo))
+        self._rebuild(select=self._current())
+        self.notify(f"Marked {len(todo):,} folders as {word}. Press u on any of them to undo it.")
+
+    def action_trash_shown(self) -> None:
+        self._mark_shown(TRASH)
+
+    def action_keep_shown(self) -> None:
+        self._mark_shown(KEEP)
 
 
 def run_review(config_path, scope: str | None, *, split_gb: float = 5.0) -> None:

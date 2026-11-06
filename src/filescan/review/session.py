@@ -32,7 +32,7 @@ from filescan.review.model import (
     Unit,
     ancestors,
     build_units,
-    distinct_unique_bytes,
+    totals_by_decision,
     kept_hashes,
     load_files,
     mark_unique,
@@ -59,6 +59,7 @@ class ReviewSession:
         self.roots: list[str] = []
         self.files_by_root: dict = {}
         self.units: list[Unit] = []
+        self._totals: dict[str, int] | None = None
         self.user_splits: set[str] = set()
         self.journal_path = config.filescan_folder / f"review_{scope}.journal.jsonl"
         self.pending: list[dict] = self._read_journal()
@@ -112,6 +113,7 @@ class ReviewSession:
         recompute_unique(units)
         units.sort(key=lambda u: (-u.unique_bytes, u.path.lower()))
         self.units = units
+        self._totals = None
 
     # ------------------------------------------------------------ decisions
 
@@ -128,18 +130,39 @@ class ReviewSession:
                 stored[key] = entry["decision"]
         return stored
 
-    def decide(self, unit: Unit, decision: str, *, save: bool = True) -> None:
-        """Record a decision. With save=False it is only journalled; call save() afterwards."""
+    def decide(self, unit: Unit, decision: str, *, save: bool = True) -> bool:
+        """Record a decision. With save=False it is only journalled; call save() afterwards.
+
+        Returns True if other units' unique bytes changed, so their labels need redrawing.
+        """
         if decision not in DECISIONS:
             raise ValueError(decision)
         self._record(unit, decision, save=save)
-        unit.decision = decision
-        recompute_unique(self.units)
+        return self._set(unit, decision)
 
-    def clear(self, unit: Unit) -> None:
-        self._record(unit, None, save=True)
-        unit.decision = None
+    def decide_many(self, units: list[Unit], decisions: list[str]) -> None:
+        """Record several decisions, with one recalculation and one database write."""
+        for unit, decision in zip(units, decisions):
+            if decision not in DECISIONS:
+                raise ValueError(decision)
+            self._record(unit, decision, save=False)
+            unit.decision = decision
         recompute_unique(self.units)
+        self._totals = None
+        self.save()
+
+    def clear(self, unit: Unit) -> bool:
+        self._record(unit, None, save=True)
+        return self._set(unit, None)
+
+    def _set(self, unit: Unit, decision: str | None) -> bool:
+        """Apply a decision. True if other units' unique bytes changed (a keep was added or removed)."""
+        before, unit.decision = unit.decision, decision
+        self._totals = None
+        if KEEP in (before, decision):
+            recompute_unique(self.units)  # kept content stops counting as unique elsewhere
+            return True
+        return False
 
     # ------------------------------------------------------------ journal
 
@@ -218,14 +241,17 @@ class ReviewSession:
     # ------------------------------------------------------------ summaries
 
     def totals(self) -> dict[str, int]:
-        return {
-            "units": len(self.units),
-            "decided": sum(1 for u in self.units if u.decision),
-            "unique": distinct_unique_bytes(self.units),
-            "keep": distinct_unique_bytes(self.units, KEEP),
-            "trash": distinct_unique_bytes(self.units, TRASH),
-            "undecided": distinct_unique_bytes(self.units, None),
-        }
+        if self._totals is None:
+            by = totals_by_decision(self.units)
+            self._totals = {
+                "units": len(self.units),
+                "decided": sum(1 for u in self.units if u.decision),
+                "unique": by["any"],
+                "keep": by[KEEP],
+                "trash": by[TRASH],
+                "undecided": by[None],
+            }
+        return self._totals
 
     def export_csv(self, out_dir: Path | None = None) -> Path:
         out_dir = out_dir or self.config.filescan_folder
