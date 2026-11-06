@@ -230,8 +230,8 @@ To build:
 
 ### Phase 5: build the server master on disk2
 
-- [ ] **[USER]** Write `layout.yml`, mapping each source top folder to a category. Anything unmapped goes to `Unsorted/<origin>`.
-  - A draft is in `C:\filescan\v2\layout.yml`: 70 mappings and a stay-in-place list. Entries marked `# ?` need a decision.
+- [x] **[USER]** Write `layout.yml`, mapping each source top folder to a category. Anything unmapped goes to `Unsorted/<origin>`.
+  - Done 6 November: `C:\filescan\v2\layout.yml` has 59 mappings and 10 folders that stay in place, and every destination is in `root_categories`.
 - [ ] New command `filescan build-plan`.
   - It produces one layout manifest, `hash → destination`, shared by the master and the PC.
   - Near-duplicate trees are merged with the existing cluster logic; pinned folders and Git repositories are copied whole.
