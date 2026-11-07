@@ -231,3 +231,51 @@ def test_keep_in_place_wins_over_a_review_kept_under_another_rule(tmp_path):
     db.close()
     meta = json.loads((run_build_plan(config_path) / "plan.json").read_text(encoding="utf-8"))
     assert meta["items"] == 0 and meta["left_out"] == {"exclusion: ev": 1}
+
+
+def test_prune_keeps_the_newest_plans_and_their_manifest_rows(tmp_path):
+    from filescan.planning.build_plan import prune_old_plans
+    from filescan.storage import SQLiteDB
+
+    build = tmp_path / "build"
+    for plan_id in ("20261101-000000", "20261102-000000", "20261103-000000"):
+        (build / plan_id).mkdir(parents=True)
+        (build / plan_id / "plan.json").write_text("{}")
+        (build / plan_id / "manifest.csv").write_text("dest\n")
+    (build / "notes").mkdir()                                   # not a plan: left alone
+    db = SQLiteDB(tmp_path / "db.sqlite")
+    db.conn.execute("CREATE TABLE build_manifest (plan_id TEXT, dest TEXT)")
+    db.conn.executemany("INSERT INTO build_manifest VALUES (?, 'x')",
+                        [("20261101-000000",), ("20261102-000000",), ("20261103-000000",)])
+    assert prune_old_plans(db, build) == ["20261101-000000"]
+    assert sorted(p.name for p in build.iterdir()) == ["20261102-000000", "20261103-000000", "notes"]
+    assert db.conn.execute("SELECT COUNT(*) FROM build_manifest").fetchone()[0] == 2
+    db.close()
+
+
+def test_build_plan_adds_its_sheets_to_the_workbook(tmp_path):
+    import re
+    import zipfile
+
+    from filescan.config import load_config
+    from filescan.dedupe.hash_all import run_hash_all
+    from filescan.inventory.scanner import run_scan
+
+    pc = tmp_path / "pc"
+    for rel, text in {"Docs/a.txt": "a", "Other/b.txt": "b"}.items():
+        (pc / rel).parent.mkdir(parents=True, exist_ok=True)
+        (pc / rel).write_text(text)
+    fs = tmp_path / "fs"
+    fs.mkdir()
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump({
+        "roots": [{"path": str(pc)}], "filescan_folder": str(fs), "database_folder": str(fs),
+        "database_filename": "db.sqlite", "report_filename": "report.xlsx", "min_file_size": 0,
+    }))
+    (fs / "layout.yml").write_text(f"root_categories: [Docs]\nmap:\n  {pc / 'Docs'}: Docs\n", encoding="utf-8")
+    run_scan(config_path)
+    run_hash_all(config_path)
+    run_build_plan(config_path)
+    with zipfile.ZipFile(load_config(config_path).report_path) as z:
+        names = re.findall(r'<sheet name="([^"]+)"', z.read("xl/workbook.xml").decode())
+    assert names == ["Contents", "Build summary", "Unsorted", "Renamed", "Long paths"]

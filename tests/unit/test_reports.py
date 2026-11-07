@@ -49,7 +49,7 @@ def test_scan_writes_the_reports_to_one_workbook_and_lists_them(tmp_path, capsys
     assert main(["--config", str(config_path), "scan"]) == 0
     out = capsys.readouterr().out
     workbook = tmp_path / "fs" / "report.xlsx"
-    assert f"Reports written to {workbook}" in out
+    assert f"Workbook written to {workbook}" in out
     # No server roots, so no "Missing from server" sheet.
     assert _sheet_names(workbook) == ["Contents", "Measure", "Exclusions", "Unwanted"]
     assert "old-os" in _sheet_xml(workbook, 3)                # the exclusion is on its sheet

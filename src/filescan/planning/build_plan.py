@@ -508,16 +508,44 @@ def gb(n: int) -> str:
     return f"{n / 1e9:,.1f} GB"
 
 
+KEEP_PLANS = 2  # each plan folder is over 1 GB on a full inventory
+
+
+def prune_old_plans(db: SQLiteDB, build_root: Path, keep: int = KEEP_PLANS) -> list[str]:
+    """Remove all but the newest `keep` build plans: their folders under build_root and their manifest rows.
+
+    Only folders that build-plan itself wrote (named by plan id, holding plan.json) are removed.
+    Returns the plan ids removed.
+    """
+    plans = sorted(d for d in build_root.glob("*") if d.is_dir() and (d / "plan.json").exists())
+    removed = []
+    for folder in plans[:-keep] if keep else plans:
+        for child in folder.iterdir():
+            child.unlink()
+        folder.rmdir()
+        removed.append(folder.name)
+    if removed:
+        try:
+            db.conn.executemany("DELETE FROM build_manifest WHERE plan_id = ?", [(r,) for r in removed])
+            db.conn.commit()
+        except Exception:  # no build_manifest table yet
+            pass
+    return removed
+
+
 def run_build_plan(config_path) -> Path:
+    from filescan.reporting.report import assemble_workbook
+
     config = load_config(config_path)
     layout = load_layout(config.filescan_folder / "layout.yml")
     db = SQLiteDB(config.database_path)
     try:
         plan = build(db, config, layout)
         _store(db, plan)
+        out = write_build_plan(plan, config, config.filescan_folder / "build")
+        removed = prune_old_plans(db, config.filescan_folder / "build")
     finally:
         db.close()
-    out = write_build_plan(plan, config, config.filescan_folder / "build")
     meta = json.loads((out / "plan.json").read_text(encoding="utf-8"))
     print(f"\nOrganised set: {meta['items']:,} files, {gb(meta['bytes'])}")
     print(f"  copied within the server: {gb(meta['copied_on_server_bytes'])}; "
@@ -532,5 +560,9 @@ def run_build_plan(config_path) -> Path:
         print(f"Left out ({reason}): {n:,} files, {gb(plan.left_out_bytes[reason])}")
     for entry in plan.unused_entries:
         print(f"layout.yml line {entry.line}: {entry.source} matched no files (a typo, or all of it is excluded)")
-    print(f"\nPlan written to {out}. Nothing has been copied.")
+    if removed:
+        print(f"Older plans removed, keeping the newest {KEEP_PLANS}: {', '.join(removed)}")
+    workbook = assemble_workbook(config).workbook
+    print(f"\nPlan written to {out}, and its summary, unsorted folders, renamed files and long paths to "
+          f"{workbook}. Nothing has been copied.")
     return out
