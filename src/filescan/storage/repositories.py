@@ -305,6 +305,28 @@ class FileRepository:
         )
         return [self._file_from_row(row) for row in rows]
 
+    def files_without_full_hash(self, *, skip_roots: list[Path] = ()) -> list[FileRecord]:
+        """Active files with no full hash, outside `skip_roots`. Cloud placeholders are left out."""
+        skip = "".join(" AND NOT (files.path = ? OR files.path LIKE ? ESCAPE '|')" for _ in skip_roots)
+        params = [value for root in skip_roots for value in path_prefix(root)]
+        rows = self.db.conn.execute(
+            f"""
+            SELECT files.id, files.folder_id, folders.path AS folder_path, files.filename, files.path, files.size,
+                   files.mtime, files.ctime, files.scan_run_id, files.is_missing, files.attributes,
+                   file_hashes.quick_hash, file_hashes.full_hash
+            FROM files
+            JOIN folders ON folders.id = files.folder_id
+            LEFT JOIN file_hashes ON file_hashes.file_id = files.id
+            WHERE files.is_missing = 0
+              AND folders.is_missing = 0
+              AND (file_hashes.full_hash IS NULL OR file_hashes.full_hash = '')
+              AND (files.attributes & ?) = 0
+              {skip}
+            """,
+            (CLOUD_PLACEHOLDER_MASK, *params),
+        )
+        return [self._file_from_row(row) for row in rows]
+
     def list_active_files(self, *, min_size: int = 0) -> list[FileRecord]:
         return list(self.iter_active_files(min_size=min_size))
 

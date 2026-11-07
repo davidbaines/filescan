@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from filescan.config import load_config
-from filescan.dedupe.hashing import full_hash, quick_hash
+from filescan.dedupe.hashing import full_hash, hash_if_unchanged, quick_hash
 from filescan.models import DuplicateGroup, FileRecord, ScanConfig
 from filescan.progress import SkipLog, progress_bar
 from filescan.storage import FileRepository, SQLiteDB
@@ -27,19 +27,6 @@ SUMMARY_FILE = "duplicates.json"
 def summary_path(config: ScanConfig) -> Path:
     """Where each duplicates run records what it read; `filescan status` shows it."""
     return config.filescan_folder / SUMMARY_FILE
-
-
-def _same_as_scanned(path: Path, record: FileRecord) -> bool:
-    stat = path.stat()
-    return stat.st_size == record.size and stat.st_mtime == record.mtime
-
-
-def _hash_if_unchanged(hasher, record: FileRecord) -> str | None:
-    """The file's hash, or None if its size or date differs from the scan, before or after reading."""
-    if not _same_as_scanned(record.path, record):
-        return None
-    digest = hasher(record.path)
-    return digest if _same_as_scanned(record.path, record) else None
 
 
 class DuplicateDetector:
@@ -86,7 +73,7 @@ class DuplicateDetector:
         pending = [file_record for file_record in files if getattr(file_record, attr) is None]
         if not pending:
             return
-        futures = {pool.submit(_hash_if_unchanged, hasher, file_record): file_record for file_record in pending}
+        futures = {pool.submit(hash_if_unchanged, hasher, file_record): file_record for file_record in pending}
         for future in as_completed(futures):
             file_record = futures[future]
             try:
