@@ -166,7 +166,7 @@ def test_build_plan_end_to_end(tmp_path, capsys):
     for rel, text in {
         "Photos/2015/a.jpg": "same", "Old/Photos/a.jpg": "same", "Old/Photos/b.jpg": "only here",
         "Junk/cache/x.tmp": "excluded", "Zotero/db.sqlite": "pinned", "Loose/n.txt": "unmapped",
-        "Code/repo/.git/HEAD": "ref", "Code/repo/a.jpg": "same",
+        "Code/repo/.git/HEAD": "ref", "Code/repo/a.jpg": "same", "Code/.git/hooks/sample": "stray",
     }.items():
         (pc / rel).parent.mkdir(parents=True, exist_ok=True)
         (pc / rel).write_text(text)
@@ -191,13 +191,16 @@ def test_build_plan_end_to_end(tmp_path, capsys):
         dests = sorted(r["dest"] for r in csv.DictReader(handle))
     origin = pc.drive.rstrip(":")
     loose = f"Unsorted/{origin}/" + "/".join(pc.parts[1:]) + "/Loose/n.txt"
-    assert dests == sorted(["Photos/2015/a.jpg", "Photos/b.jpg", "GitHub/repo/.git/HEAD", "GitHub/repo/a.jpg", loose])
+    assert dests == sorted(["Photos/2015/a.jpg", "Photos/b.jpg", "GitHub/repo/.git/HEAD", "GitHub/repo/a.jpg",
+                            "GitHub/.git/hooks/sample", loose])
     meta = json.loads((out / "plan.json").read_text(encoding="utf-8"))
     assert meta["dropped"] == 1
     assert meta["left_out"] == {"exclusion: junk": 1, "pinned folder (Phase 7 mirror)": 1}
     assert meta["unused_layout_entries"] == [f"line 6: {pc / 'Nowhere'}"]
     db = SQLiteDB(load_config(config_path).database_path)
-    assert db.conn.execute("SELECT COUNT(*) FROM build_manifest").fetchone()[0] == 5
+    assert db.conn.execute("SELECT COUNT(*) FROM build_manifest").fetchone()[0] == 6
+    from filescan.planning.build_plan import _git_repos
+    assert _git_repos(db) == [str(pc / "Code" / "repo").lower()]  # a .git folder without HEAD is not a repository
     db.close()
     assert "Nothing has been copied" in capsys.readouterr().out
 

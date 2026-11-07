@@ -75,6 +75,13 @@ rules:
     disposition: delete-candidate
     reason: Thumbnail databases and Windows or macOS folder metadata
 
+  - name: windows-swap-files
+    match: file
+    pattern: '^(pagefile|hiberfil|swapfile)\.sys$'
+    category: junk
+    disposition: delete-candidate
+    reason: Windows swap and hibernation files, left behind on old system drives
+
   - name: temp-files
     match: file
     pattern: '(^~\$|\.(tmp|temp|crdownload|part|partial)$)'

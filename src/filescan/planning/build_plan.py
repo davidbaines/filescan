@@ -101,9 +101,22 @@ class BuildPlan:
 
 
 def _git_repos(db: SQLiteDB) -> list[str]:
-    """Outermost repository folders (lower case): a nested repository belongs to its parent."""
-    rows = db.conn.execute(r"SELECT path FROM folders WHERE is_missing = 0 AND path LIKE '%\.git'")
-    repos = sorted({norm(r["path"])[:-len("\\.git")] for r in rows if norm(r["path"]).endswith("\\.git")})
+    """Outermost repository folders (lower case): a nested repository belongs to its parent.
+
+    A folder counts as a repository only if it holds .git\\HEAD, or a .git file (a submodule or
+    worktree link). A stray .git folder with nothing in it (E:\\GitHub has one) does not count.
+    """
+    rows = db.conn.execute(
+        r"""SELECT path FROM files WHERE is_missing = 0
+            AND (path LIKE '%\.git\HEAD' OR (filename = '.git' AND path LIKE '%\.git'))""")
+    repos = set()
+    for r in rows:
+        low = norm(r["path"])
+        if low.endswith("\\.git\\head"):
+            repos.add(low[:-len("\\.git\\head")])
+        elif low.endswith("\\.git"):
+            repos.add(low[:-len("\\.git")])
+    repos = sorted(repos)
     outer: list[str] = []
     for repo in repos:  # sorted, so a parent comes before its children
         if not any(repo.startswith(o + "\\") for o in outer):
