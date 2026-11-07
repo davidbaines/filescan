@@ -21,14 +21,11 @@ poetry install                                   # install dependencies
 # repository root (copy .env.example). There is no built-in default. With no command,
 # filescan prints the help, grouped by stage.
 filescan status                                  # where the work stands and what to run next (reads only)
-filescan scan [--rescan]                         # the whole inventory: drives, scan-pc, import-server, hash-all in turn
+filescan scan [--rescan]                         # the whole inventory (drives, scan-pc, import-server, hash-all), then report
 #   the single steps, for when only one is needed (not in README.md):
 #   filescan drives | scan-pc | import-server | hash-all
-filescan exclusions-report                       # CSV of what each exclusion rule leaves out
-filescan unwanted-report                         # unwanted-data rules, reported by folder
+filescan report                                  # the reports again without scanning: one workbook plus CSVs
 filescan review server-trash                     # keep or trash, folder by folder, for one exclusion
-filescan measure                                 # distinct size of the organised set against disk space
-filescan compare                                 # PC files with no identical copy on the server (reads only)
 filescan cleanup-plan                            # files marked trash or matched by delete-candidate rules (CSV)
 filescan cleanup --plan DIR                      # move a reviewed plan's files to quarantine (reversible)
 filescan cleanup-restore --plan DIR
@@ -59,7 +56,7 @@ The live configuration and database are in `C:\filescan` (`config.yml`, `file_in
 | Hash | `dedupe/hash_all.py`, `inventory/server_hash.py` | A full hash for every file: PC files here, two per drive; server files by `fsagent hash` |
 | Exclusions and unwanted data | `exclusion_index.py`, `reporting/exclusions.py`, `cleanup/unwanted.py` | Rules from `config.yml` and `cleanup/unwanted_rules.yml`, applied by folder |
 | Review | `review/` | Textual screen: keep or trash, folder by folder, for one delete-candidate exclusion |
-| Measure and compare | `reporting/measure.py`, `compare.py` | Distinct size of the organised set; PC files with no copy on the server. Both only read the database |
+| Reports | `reporting/report.py`, `reporting/xlsx.py`, `reporting/measure.py`, `reporting/exclusions.py`, `cleanup/unwanted.py`, `compare.py` | `run_reports_for_config` writes each report as CSV, then one workbook (standard library only); all read the database, and unwanted also stores its matches |
 | Cleanup | `cleanup/plan.py`, `cleanup/quarantine.py`, `cleanup/delete_folder.py` | Plan from review decisions and rules; quarantine on the same disk, restore, purge. Server files move through `fsagent move` and `fsagent remove` |
 | Build plan | `planning/layout.py`, `planning/build_plan.py` | `load_layout` reads and checks `layout.yml`; `build` keeps one copy of each content in layout order, keeps Git repositories whole and writes the manifest |
 | Status | `status.py` | What has been done and what to run next; reads only |

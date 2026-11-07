@@ -6,7 +6,9 @@ It runs four steps in order, each of which also exists as a command of its own:
    wrong drive is skipped by the scan, so its files are never marked missing);
 2. scan-pc: record every PC folder and file;
 3. import-server: list the server roots with fsagent over SSH;
-4. hash-all: give every file without one a full hash, PC and server.
+4. hash-all: give every file without one a full hash, PC and server;
+
+then it writes every report (`filescan report`) and lists what it wrote.
 
 A step with nothing to do is skipped: with no server roots in config.yml there
 is no SSH at all, and with no PC roots no PC scan. To scan only some roots,
@@ -27,6 +29,7 @@ from filescan.inventory.preflight import check_db_space
 from filescan.inventory.scanner import run_scan
 from filescan.inventory.server_import import run_import_server
 from filescan.inventory.volumes import run_drives
+from filescan.reporting.report import print_written, run_reports_for_config
 
 
 def run_full_scan(config_path: str | Path, *, rescan: bool = False, delta: bool = False) -> list[str]:
@@ -51,10 +54,16 @@ def run_full_scan(config_path: str | Path, *, rescan: bool = False, delta: bool 
             failed.append(name)
             print(f"{name} failed: {exc}")
             traceback.print_exc(limit=3)
+    print("\n=== Reports ===")
+    notes = [f"The scan's {name} step failed, so these reports leave out what it would have added."
+             for name in failed]
+    report = run_reports_for_config(config, notes=notes)
+    print_written(report)
+
     print()
     if failed:
         print(f"Finished, but these steps failed: {', '.join(failed)}. Fix the cause and run "
               "`filescan scan` again; finished work is kept, so it carries on where it stopped.")
     else:
         print("Inventory complete. `filescan status` shows what to do next.")
-    return failed
+    return failed + [f"report: {name}" for name in report.failed]

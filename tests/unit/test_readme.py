@@ -7,7 +7,7 @@ from filescan.cli import COMMAND_GROUPS, HELP, PLANNED_GROUPS
 
 README = Path(__file__).resolve().parents[2] / "README.md"
 PLANNED = {name for _, items in PLANNED_GROUPS for name, _ in items}
-RETIRED = {"run", "similarity", "plan", "merge-review", "execute", "report", "waste", "largest", "clusters",
+RETIRED = {"run", "similarity", "plan", "merge-review", "execute", "waste", "largest", "clusters",
            "duplicates", "hash-server"}
 
 

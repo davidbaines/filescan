@@ -31,27 +31,35 @@ To install filescan on the PC and run it from there:
 
 Each command says whether it only reads, writes reports, or changes files. Commands that change files are marked **moves** or **deletes**.
 
-### 1. Inventory: record and hash every file
+### 1. Inventory and reports
 
 | Command | What it does | Changes files? |
 |---|---|---|
-| `filescan scan` | Records every file on the PC and the server, and gives each one a content hash. It checks each PC drive is the right one, walks the PC roots, lists the server roots over SSH, then hashes every file that has no hash yet: PC files here, two at a time per drive, and server files on the server. | No |
+| `filescan scan` | Records every file on the PC and the server, and gives each one a content hash. It checks each PC drive is the right one, walks the PC roots, lists the server roots over SSH, then hashes every file that has no hash yet: PC files here, two at a time per drive, and server files on the server. When it finishes, it writes the reports and lists what it wrote. | No |
+| `filescan report` | Writes the reports again without scanning, for example after changing the unwanted-data rules. | No |
 
-Run `scan` again whenever files have changed: it reads only what is new or changed, and a file whose size or date has changed gets a new hash. It is safe to stop and run again. If one part fails, for example because the server is off, the rest still runs and the summary says what to run again. Files that cannot be read are listed in the `logs` folder.
+Run `scan` again whenever files have changed: it reads only what is new or changed, and a file whose size or date has changed gets a new hash. It is safe to stop and run again. If one part fails, for example because the server is off, the rest still runs, and the summary and the workbook say which part failed. Files that cannot be read are listed in the `logs` folder.
 
 To scan only some places, comment out the other roots in `config.yml`. `--rescan` walks every PC folder again, rather than only the changed ones.
 
 Every later step compares files by these hashes. Two files count as the same only when their hashes match.
 
-### 2. Find what can go
+The reports go into one workbook, `filescan_report.xlsx` in the filescan folder (`report_filename` in `config.yml` changes the name), with a Contents sheet and one sheet per report:
+
+| Sheet | What it shows |
+|---|---|
+| Measure | The size of the organised set, each content counted once, against the free space on the PC drives and the server disks. |
+| Exclusions | The folders each exclusion in `config.yml` leaves out of the organised set (old Windows folders, caches, public corpora and so on), with sizes. |
+| Unwanted | Matches of the unwanted-data rules (`src/filescan/cleanup/unwanted_rules.yml`: installers, caches, temporary files, old File History versions), by folder. |
+| Missing from server | PC files with no identical copy on the server, totalled by top folder. |
+
+Each sheet is also written as a CSV. Two lists are CSV only, because they can be longer than Excel allows (1,048,576 rows): every file an unwanted-data rule matches (`unwanted_files.csv`), and every PC file with no copy on the server (`compare_missing_files.csv`). If the workbook is open in Excel when the reports are written, they go to a copy with the date and time in its name.
+
+### 2. Decide what can go
 
 | Command | What it does | Changes files? |
 |---|---|---|
-| `filescan exclusions-report` | Lists the folders each exclusion in `config.yml` leaves out of the organised set (old Windows folders, caches, public corpora and so on), with sizes, in `exclusions_report.csv`. | No |
-| `filescan unwanted-report` | Applies the unwanted-data rules (`src/filescan/cleanup/unwanted_rules.yml`: installers, caches, temporary files, old File History versions) and reports the matches by folder in `unwanted_report.csv`. | No |
 | `filescan review <exclusion>` | Opens a screen to mark each folder of one delete-candidate exclusion, such as `server-trash`, as keep or trash. It shows how much of each folder exists nowhere else. Decisions are saved as you go, in the database and in `review_<exclusion>.csv`. | No |
-| `filescan measure` | Measures the organised set (each content counted once) against the free space on the PC drives and the server disks. | No |
-| `filescan compare` | Lists the PC files with no identical copy on the server, in `compare_missing_files.csv`, with totals per folder. | No |
 
 ### 3. Clean up
 
@@ -85,7 +93,7 @@ After that, a plain mirror from the PC to disk2 keeps the server copy up to date
 Everything goes in the configured `filescan_folder` (`C:\filescan\v2`):
 
 - `file_index.db`: the database, the record of every file, hash and decision;
-- the report CSVs named above;
+- `filescan_report.xlsx` and the report CSVs named above;
 - `cleanup\<plan id>\`: cleanup plans and their action logs;
 - `build\<plan id>\`: build plans;
 - `deletions\`: what `delete-folder` deleted;

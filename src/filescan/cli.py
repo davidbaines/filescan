@@ -6,8 +6,6 @@ from pathlib import Path
 from filescan.cleanup.delete_folder import run_delete_folder
 from filescan.cleanup.plan import run_cleanup_plan
 from filescan.cleanup.quarantine import run_cleanup, run_cleanup_purge, run_cleanup_restore
-from filescan.cleanup.unwanted import run_unwanted_report
-from filescan.compare import run_compare
 from filescan.config import ConfigNotSet, load_config, resolve_config_path
 from filescan.dedupe.hash_all import run_hash_all
 from filescan.inventory.full_scan import run_full_scan
@@ -16,8 +14,7 @@ from filescan.inventory.scanner import run_scan
 from filescan.inventory.server_import import run_import_server
 from filescan.inventory.volumes import run_drives
 from filescan.planning.build_plan import run_build_plan
-from filescan.reporting.exclusions import run_exclusions_report
-from filescan.reporting.measure import run_measure
+from filescan.reporting.report import run_reports
 from filescan.review.app import run_review
 from filescan.status import run_status
 from filescan.storage.db import validate_database_ready
@@ -28,15 +25,12 @@ COMMAND_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
     ("Start here", [
         ("status", "Show where the work stands and what to run next. Reads only."),
     ]),
-    ("1. Inventory", [
-        ("scan", "Record and hash every file, PC and server: drives, scan-pc, import-server and hash-all in turn."),
+    ("1. Inventory and reports", [
+        ("scan", "Record and hash every file, PC and server, then write the reports to one workbook."),
+        ("report", "Write the reports again without scanning (scan writes them when it finishes)."),
     ]),
-    ("2. Find what can go", [
-        ("exclusions-report", "List the folders each exclusion rule leaves out of the organised set, with sizes (CSV)."),
-        ("unwanted-report", "Apply the unwanted-data rules outside the exclusions and report matches by folder (CSV)."),
+    ("2. Decide what can go", [
         ("review", "Review a delete-candidate exclusion (such as server-trash) folder by folder: keep or trash."),
-        ("measure", "Distinct size of the organised set, against PC and server disk space."),
-        ("compare", "List PC files with no identical copy on the server (CSV)."),
     ]),
     ("3. Clean up", [
         ("cleanup-plan", "List every file marked trash in a review, or matched by a delete-candidate rule (CSV)."),
@@ -76,7 +70,7 @@ Run "filescan <command> -h" for a command's options. README.md explains each ste
 HELP: dict[str, str] = {name: text for _, items in COMMAND_GROUPS for name, text in items}
 
 # Commands that make or check the inventory, so a warning about an old scan is beside the point.
-_NO_STALE_CHECK = ("scan", "scan-pc", "import-server", "hash-all", "status", "drives")
+_NO_STALE_CHECK = ("scan", "scan-pc", "import-server", "hash-all", "status", "drives", "report")
 
 
 def _commands_text() -> str:
@@ -103,8 +97,7 @@ def build_parser() -> argparse.ArgumentParser:
     def add(name: str) -> argparse.ArgumentParser:
         return subparsers.add_parser(name, help=HELP[name], description=HELP[name], prog=f"filescan {name}")
 
-    for name in ("status", "drives", "import-server", "hash-all", "exclusions-report", "unwanted-report",
-                 "measure", "compare", "build-plan"):
+    for name in ("status", "drives", "import-server", "hash-all", "report", "build-plan"):
         add(name)
 
     for name in ("scan", "scan-pc"):
@@ -193,16 +186,10 @@ def main(argv: list[str] | None = None) -> int:
         run_import_server(args.config)
     elif command == "hash-all":
         run_hash_all(args.config)
-    elif command == "exclusions-report":
-        print(run_exclusions_report(args.config))
-    elif command == "unwanted-report":
-        run_unwanted_report(args.config)
+    elif command == "report":
+        return 1 if run_reports(args.config).failed else 0
     elif command == "review":
         run_review(args.config, args.scope, split_gb=args.split_gb)
-    elif command == "measure":
-        run_measure(args.config)
-    elif command == "compare":
-        run_compare(args.config)
     elif command == "cleanup-plan":
         run_cleanup_plan(args.config, only=args.only, include_rules=not args.no_rules)
     elif command == "cleanup":
