@@ -30,6 +30,7 @@ from filescan.config import load_config
 from filescan.dedupe.hashing import full_hash, hash_if_unchanged
 from filescan.inventory.server_hash import HashRunner, ServerHasher, unc_to_posix
 from filescan.models import FileRecord, ScanConfig
+from filescan.problems import replace_tried
 from filescan.progress import SkipLog, progress_bar
 from filescan.storage import FileRepository, SQLiteDB
 
@@ -46,7 +47,7 @@ def _drive(record: FileRecord) -> str:
 def hash_pc_files(db: SQLiteDB, config: ScanConfig, records: list[FileRecord]) -> dict[str, int]:
     """Hash PC files, a few at a time per drive. Returns counts: hashed, unreadable, changed."""
     repo = FileRepository(db)
-    skips = SkipLog(config.filescan_folder, "hash-all")
+    skips = SkipLog(config.filescan_folder, "hash-all", keep=True)
     counts = {"hashed": 0, "unreadable": 0, "changed": 0}
     queues: dict[str, list[FileRecord]] = {}
     for record in records:
@@ -98,6 +99,8 @@ def hash_pc_files(db: SQLiteDB, config: ScanConfig, records: list[FileRecord]) -
             pool.shutdown(cancel_futures=True)
         db.conn.commit()
     skips.summary()
+    failed = [("file", path, problem) for what, path, problem in skips.entries or [] if what == "full hash"]
+    replace_tried(db, "hash", [str(r.path) for r in records], failed)
     return counts
 
 
@@ -135,6 +138,11 @@ def run_hash_all_for_config(config: ScanConfig, *, server_runner: HashRunner | N
         result["server_hashed"] = summary.hashed
         result["server_stale"] = summary.stale
         result["server_errors"] += summary.errors
+        db = SQLiteDB(config.database_path)
+        try:
+            replace_tried(db, "hash", [str(r.path) for r in server], [("file", p, e) for p, e in summary.failed])
+        finally:
+            db.close()
     print(f"PC: {result['hashed']:,} hashed, {result['unreadable']:,} could not be read, "
           f"{result['changed']:,} changed since the scan (scan again to include them).")
     print(f"Server: {result['server_hashed']:,} hashed, {result['server_stale']:,} changed since the import, "

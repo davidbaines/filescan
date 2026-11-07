@@ -39,9 +39,11 @@ class SkipLog:
     worker threads. The log file is created only if something is logged.
     """
 
-    def __init__(self, folder: Path | None, name: str) -> None:
+    def __init__(self, folder: Path | None, name: str, *, keep: bool = False) -> None:
         self.path = None if folder is None else Path(folder) / "logs" / f"{name}-{time.strftime('%Y%m%d-%H%M%S')}.log"
         self.counts: Counter[str] = Counter()
+        # With keep=True, every (what, path, problem) is also kept, so the caller can store them.
+        self.entries: list[tuple[str, str, str]] | None = [] if keep else None
         self._handle = None
         self._lock = threading.Lock()
         self._bar: tqdm | None = None
@@ -59,6 +61,8 @@ class SkipLog:
         reason = _reason(problem)
         with self._lock:
             self.counts[f"{what}: {reason}"] += 1
+            if self.entries is not None:
+                self.entries.append((what, str(path), str(problem)))
             if self.path is not None:
                 try:
                     if self._handle is None:

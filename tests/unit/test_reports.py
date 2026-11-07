@@ -51,7 +51,7 @@ def test_scan_writes_the_reports_to_one_workbook_and_lists_them(tmp_path, capsys
     workbook = tmp_path / "fs" / "report.xlsx"
     assert f"Workbook written to {workbook}" in out
     # No server roots, so no "Missing from server" sheet.
-    assert _sheet_names(workbook) == ["Contents", "Measure", "Exclusions", "Unwanted"]
+    assert _sheet_names(workbook) == ["Contents", "Measure", "Exclusions", "Unwanted", "Unreadable"]
     assert "old-os" in _sheet_xml(workbook, 3)                # the exclusion is on its sheet
     # Unwanted-data matches have rows. (Tests run under a Temp folder, which a rule matches as a whole.)
     assert '<row r="2"' in _sheet_xml(workbook, 4)

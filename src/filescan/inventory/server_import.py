@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PureWindowsPath
 
 from filescan.config import load_config
+from filescan.problems import replace_under
 from filescan.models import FileRecord, FolderRecord, RootConfig, ScanConfig
 from filescan.progress import SkipLog, progress_bar
 from filescan.storage import FileRepository, SQLiteDB
@@ -125,6 +126,7 @@ class ServerImporter:
         server_root = root_config.server_path or ""
         pending: _PendingFolder | None = None
         folders = files = 0
+        problems: list[tuple[str, str, str]] = []
         # Collect the whole listing before writing anything, so a listing that
         # fails part-way leaves the database untouched.
         lines = list(self.runner(root_config))
@@ -140,10 +142,14 @@ class ServerImporter:
                 if kind == "error":
                     summary.errors += 1
                     self.skips.add("server error", record.get("path"), record.get("error"))
+                    where = posix_to_unc(str(record.get("path", "")), server_root, root)
+                    problems.append(("folder", str(where or record.get("path")), str(record.get("error"))))
                     continue
                 unc = None if record.get("bad_name") else posix_to_unc(record["path"], server_root, root)
                 if unc is None:
                     summary.unrepresentable.append(record["path"])
+                    problems.append(("file" if kind == "f" else "folder", record["path"],
+                                     "name cannot be represented on Windows"))
                     continue
                 if kind == "d":
                     if pending is not None:
@@ -169,6 +175,9 @@ class ServerImporter:
         repo.mark_missing_under_root(root, scan_run_id)
         repo.upsert_scan_stats(root=root, scan_run_id=scan_run_id, total_folders=folders, total_files=files,
                                indexed_folders=folders, indexed_files=files)
+        # Unrepresentable names keep their server (POSIX) path, so they are stored under the root by prefix
+        # of the UNC path where possible and listed as they are otherwise.
+        replace_under(repo.db, "import", root, problems)
         summary.folders += folders
         summary.files += files
 

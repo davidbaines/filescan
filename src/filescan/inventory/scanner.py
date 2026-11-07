@@ -9,6 +9,7 @@ from pathlib import Path
 
 from filescan.config import load_config
 from filescan.inventory.normalizer import normalize_path
+from filescan.problems import replace_under
 from filescan.inventory.volumes import MARKER, root_problem
 from filescan.models import FileRecord, FolderRecord, ScanConfig
 from filescan.progress import SkipLog, progress_bar
@@ -42,7 +43,7 @@ class InventoryScanner:
         self.delta = delta and not rescan  # rescan overrides delta
         self._logged_skips: set[tuple[str, Path, str]] = set()
         self._skip_paths = config.skip_paths
-        self.skips = SkipLog(config.filescan_folder, "scan")
+        self.skips = SkipLog(config.filescan_folder, "scan", keep=True)
 
     def _log_skip(self, *, kind: str, path: Path, exc: OSError) -> None:
         key = (kind, Path(path), str(exc))
@@ -297,6 +298,11 @@ class InventoryScanner:
             if root_delta:
                 print(f"  {indexed_folders:,} folders read again, {skipped_folders:,} unchanged")
             repo.mark_missing_under_root(root, scan_run_id)
+            prefix = str(normalized_root).rstrip("\\").lower() + "\\"
+            under = [("folder" if what == "folder" else "file", path, problem)
+                     for what, path, problem in self.skips.entries or []
+                     if path.lower().startswith(prefix) or path.lower() == prefix[:-1]]
+            replace_under(db, "scan", root, under)
             repo.upsert_scan_stats(
                 root=root,
                 scan_run_id=scan_run_id,

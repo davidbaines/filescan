@@ -135,12 +135,24 @@ def _hashes(status: Status, db: SQLiteDB) -> None:
             LEFT JOIN file_hashes h ON h.file_id = f.id
             WHERE f.is_missing = 0 AND fo.is_missing = 0 AND (h.full_hash IS NULL OR h.full_hash = '')
               AND (f.attributes & {CLOUD_PLACEHOLDER_MASK}) = 0""").fetchone()
+    try:
+        unreadable = db.conn.execute("SELECT COUNT(*) FROM access_problems WHERE stage = 'hash'").fetchone()[0]
+        problems = db.conn.execute("SELECT COUNT(*) FROM access_problems").fetchone()[0]
+    except Exception:  # no problems recorded yet: the table is created by the first scan that finds one
+        unreadable = problems = 0
+    waiting = row["n"] - unreadable
     if row["n"]:
-        status.add(f"hashes: {row['n']:,} files ({row['bytes'] / 1e9:,.1f} GB) have no full hash")
-        status.todo.append("scan: give the remaining files a full hash (hashing reads only what is missing; "
-                           "files it cannot read are listed in the logs folder).")
+        status.add(f"hashes: {row['n']:,} files ({row['bytes'] / 1e9:,.1f} GB) have no full hash"
+                   + (f"; {unreadable:,} of them could not be read" if unreadable else ""))
+        if waiting > 0:
+            status.todo.append("scan: give the remaining files a full hash (hashing reads only what is missing).")
     else:
         status.add("hashes: every file has a full hash")
+    if problems:
+        status.add(f"unreadable: {problems:,} files and folders could not be read; the workbook's Unreadable sheet "
+                   "lists them by folder")
+        status.todo.append("Unreadable sheet: delete the folders listed there that you don't need, or make them "
+                           "readable yourself; filescan does not change permissions.")
 
 
 def _reviews(status: Status, config: ScanConfig) -> None:

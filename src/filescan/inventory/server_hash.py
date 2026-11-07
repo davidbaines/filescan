@@ -13,7 +13,7 @@ import re
 import shlex
 import subprocess
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from filescan.inventory.server_import import FSAGENT, mtime_from_ns, posix_to_unc
@@ -67,6 +67,7 @@ class HashSummary:
     hashed: int = 0
     stale: int = 0
     errors: int = 0
+    failed: list = field(default_factory=list)  # (UNC path, error) for files the server could not read
 
 
 class ServerHasher:
@@ -94,6 +95,8 @@ class ServerHasher:
                 for result in self.runner(root, posix_paths):
                     if "xxh128" not in result:
                         summary.errors += 1
+                        unc = posix_to_unc(str(result.get("path", "")), root.server_path or "", root.path)
+                        summary.failed.append((str(unc or result.get("path")), str(result.get("error", ""))))
                         continue
                     unc = posix_to_unc(result["path"], root.server_path or "", root.path)
                     row = None if unc is None else db.conn.execute(

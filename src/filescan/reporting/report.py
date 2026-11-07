@@ -40,6 +40,7 @@ from filescan.cleanup.unwanted import run_unwanted_report_for_config
 from filescan.compare import run_compare_for_config
 from filescan.config import load_config
 from filescan.models import ScanConfig
+from filescan.problems import write_unreadable_report
 from filescan.reporting.exclusions import write_exclusions_report
 from filescan.reporting.measure import run_measure_for_config
 from filescan.reporting.xlsx import MAX_ROWS, Rows, write_workbook
@@ -145,7 +146,8 @@ def run_reports_for_config(config: ScanConfig, *, notes: list[str] | None = None
     """Write each report, then the workbook. A report that fails is listed, and the others are still written."""
     written: list[str] = []
     failed: list[str] = []
-    steps = [("unwanted", lambda: run_unwanted_report_for_config(config)),
+    steps = [("unreadable", lambda: write_unreadable_report(config)),
+             ("unwanted", lambda: run_unwanted_report_for_config(config)),
              ("measure", lambda: run_measure_for_config(config)),
              ("exclusions", lambda: write_exclusions_report(config))]
     if config.server_roots:
