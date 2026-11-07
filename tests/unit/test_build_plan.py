@@ -157,7 +157,7 @@ def test_files_without_a_hash_are_each_kept():
 
 
 def test_build_plan_end_to_end(tmp_path, capsys):
-    from filescan.dedupe.duplicates import DuplicateDetector
+    from filescan.dedupe.hash_all import run_hash_all
     from filescan.inventory.scanner import run_scan
     from filescan.config import load_config
     from filescan.storage import SQLiteDB
@@ -184,7 +184,7 @@ def test_build_plan_end_to_end(tmp_path, capsys):
         f"  {pc / 'Photos'}: Photos\n  {pc / 'Old' / 'Photos'}: Photos\n  {pc / 'Code'}: GitHub\n"
         f"  {pc / 'Nowhere'}: Photos/None\n", encoding="utf-8")
     run_scan(config_path)
-    DuplicateDetector(load_config(config_path)).run()
+    run_hash_all(config_path)
     out = run_build_plan(config_path)
 
     with (out / "manifest.csv").open(encoding="utf-8-sig") as handle:

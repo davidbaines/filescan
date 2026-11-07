@@ -1,28 +1,25 @@
 """Task 2: which PC files have no identical copy on the server?
 
-1. Sizes are compared first: a PC file whose size occurs nowhere on the server
-   cannot have a copy there, so it is never read.
-2. Files whose size occurs on both sides get full hashes: PC files are hashed
-   locally, server files on the server by fsagent.
-3. Every PC file without a matching server hash is written to a CSV with its
-   status, together with totals per top folder.
+`filescan compare` reads only the database: run `hash-all` first so every file
+has a full hash. Every PC file without a server file of the same content is
+written to a CSV with its status, together with totals per top folder:
 
-Cloud placeholders are never read; they are reported as unchecked.
+- no-size-match: no server file has its size, so it cannot be on the server;
+- content-differs: server files share its size but none its hash;
+- not-hashed: it or a server file of its size has no hash yet (run hash-all);
+- cloud-placeholder: never read, so unchecked.
 """
 
 from __future__ import annotations
 
 import csv
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
 from filescan.config import load_config
-from filescan.dedupe.hashing import full_hash
-from filescan.inventory.server_hash import HashRunner, ServerHasher
-from filescan.models import FileRecord, ScanConfig
-from filescan.progress import SkipLog, progress_bar
-from filescan.storage import FileRepository, SQLiteDB
+from filescan.models import ScanConfig
+from filescan.progress import progress_bar
+from filescan.storage import SQLiteDB
 from filescan.storage.sql import CLOUD_PLACEHOLDER_MASK
 
 
@@ -76,28 +73,6 @@ def _load_rows(db: SQLiteDB, config: ScanConfig) -> tuple[list[_Row], list[_Row]
     return pc_rows, server_rows
 
 
-def _hash_pc_files(db: SQLiteDB, rows: list[_Row], workers: int, skips: SkipLog) -> None:
-    repo = FileRepository(db)
-    with progress_bar(desc="compare hash pc", total=len(rows), unit="file") as bar, \
-            ThreadPoolExecutor(max_workers=workers) as pool:
-        skips.attach(bar)
-        futures = {pool.submit(full_hash, Path(row.path)): row for row in rows}
-        done = 0
-        for future in as_completed(futures):
-            row = futures[future]
-            bar.update(1)
-            try:
-                row.full_hash = future.result()
-            except OSError as exc:
-                skips.add("full hash", row.path, exc)
-                continue
-            repo.upsert_file_hash(row.id, full_hash=row.full_hash, commit=False)
-            done += 1
-            if done % 500 == 0:
-                db.conn.commit()
-    db.conn.commit()
-
-
 def _top_folder(path: str, pc_roots: list[str]) -> str:
     root = _root_of(path, pc_roots) or ""
     rest = path[len(root.rstrip("\\")) + 1:]
@@ -105,36 +80,17 @@ def _top_folder(path: str, pc_roots: list[str]) -> str:
     return root.rstrip("\\") + ("\\" + first if first else "")
 
 
-def run_compare_for_config(config: ScanConfig, *, server_runner: HashRunner | None = None) -> CompareResult:
-    db = SQLiteDB(config.database_path)
-    try:
-        pc_rows, server_rows = _load_rows(db, config)
-        server_sizes = {r.size for r in server_rows if not r.attributes & CLOUD_PLACEHOLDER_MASK}
-        pc_sizes = {r.size for r in pc_rows if not r.attributes & CLOUD_PLACEHOLDER_MASK}
-        shared = server_sizes & pc_sizes
-        pc_todo = [r for r in pc_rows if r.size in shared and r.full_hash is None
-                   and not r.attributes & CLOUD_PLACEHOLDER_MASK]
-        server_todo = [r for r in server_rows if r.size in shared and r.full_hash is None]
-        print(f"{len(shared):,} sizes occur on both sides: {len(pc_todo):,} PC and "
-              f"{len(server_todo):,} server files need hashing")
-        if pc_todo:
-            skips = SkipLog(config.filescan_folder, "compare")
-            _hash_pc_files(db, pc_todo, config.worker_count, skips)
-            skips.summary()
-    finally:
-        db.close()
-
-    if server_todo:
-        records = [FileRecord(path=Path(r.path), folder_path=Path(r.folder), filename=Path(r.path).name,
-                              size=r.size, mtime=0.0, ctime=0.0, id=r.id) for r in server_todo]
-        ServerHasher(config, runner=server_runner).hash_files(records)
-
+def run_compare_for_config(config: ScanConfig) -> CompareResult:
+    """Report only: it reads the hashes `hash-all` stored and reads no file."""
     db = SQLiteDB(config.database_path)
     try:
         pc_rows, server_rows = _load_rows(db, config)
     finally:
         db.close()
+    server_sizes = {r.size for r in server_rows if not r.attributes & CLOUD_PLACEHOLDER_MASK}
     server_hashes = {r.full_hash for r in server_rows if r.full_hash}
+    # Sizes where a server file has no hash yet: a PC file of that size cannot be ruled out.
+    server_unhashed_sizes = {r.size for r in server_rows if not r.full_hash}
 
     pc_roots = [str(p) for p in config.pc_roots]
     rule_cache: dict[str, str] = {}
@@ -163,10 +119,10 @@ def run_compare_for_config(config: ScanConfig, *, server_runner: HashRunner | No
                 status = "cloud-placeholder"
             elif row.size not in server_sizes:
                 status = "no-size-match"
-            elif row.full_hash is None:
-                status = "not-hashed"
-            elif row.full_hash in server_hashes:
+            elif row.full_hash and row.full_hash in server_hashes:
                 continue
+            elif row.full_hash is None or row.size in server_unhashed_sizes:
+                status = "not-hashed"
             else:
                 status = "content-differs"
             rule = excluded_by(row.folder)
@@ -192,31 +148,3 @@ def run_compare_for_config(config: ScanConfig, *, server_runner: HashRunner | No
 
 def run_compare(config_path: str | Path) -> CompareResult:
     return run_compare_for_config(load_config(config_path))
-
-
-def run_hash_server_for_config(config: ScanConfig, *, server_runner: HashRunner | None = None) -> int:
-    """Hash, on the server, every server file whose size occurs more than once anywhere.
-
-    A unique size cannot have a duplicate, so those files are never read. The
-    results feed duplicate detection within the server and the master build.
-    """
-    db = SQLiteDB(config.database_path)
-    try:
-        pc_rows, server_rows = _load_rows(db, config)
-    finally:
-        db.close()
-    counts: dict[int, int] = {}
-    for row in (*pc_rows, *server_rows):
-        if not row.attributes & CLOUD_PLACEHOLDER_MASK:
-            counts[row.size] = counts.get(row.size, 0) + 1
-    todo = [r for r in server_rows if r.full_hash is None and counts.get(r.size, 0) > 1]
-    print(f"{len(todo):,} server files ({sum(r.size for r in todo) / 1e9:,.1f} GB) share a size and need hashing")
-    if todo:
-        records = [FileRecord(path=Path(r.path), folder_path=Path(r.folder), filename=Path(r.path).name,
-                              size=r.size, mtime=0.0, ctime=0.0, id=r.id) for r in todo]
-        ServerHasher(config, runner=server_runner).hash_files(records)
-    return len(todo)
-
-
-def run_hash_server(config_path: str | Path) -> int:
-    return run_hash_server_for_config(load_config(config_path))

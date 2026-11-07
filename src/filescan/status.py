@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from filescan.cleanup.plan import gb
-from filescan.dedupe.duplicates import summary_path
+from filescan.storage.sql import CLOUD_PLACEHOLDER_MASK
 from filescan.inventory.volumes import root_problem
 from filescan.models import RootConfig, ScanConfig
 from filescan.progress import progress_bar
@@ -124,37 +124,23 @@ def _roots(status: Status, db: SQLiteDB, config: ScanConfig) -> None:
         elif datetime.fromisoformat(row["last_scanned_at"]) < cutoff and rc.role != "master":
             status.todo.append(f"{'scan' if rc.location == 'pc' else 'import-server'}: {rc.path} was last "
                                f"scanned more than {config.scan_max_age.days} days ago.")
-    latest = db.conn.execute("SELECT MAX(id) AS id FROM scan_runs").fetchone()["id"] or 0
-    stages = {row["stage"]: row for row in db.conn.execute("SELECT stage, scan_run_id, updated_at FROM analysis_state")}
-    dup, server = stages.get("duplicates"), stages.get("server-hashes")
-    if dup is None or int(dup["scan_run_id"]) < latest:
-        status.add("duplicates: not run since the last scan")
-        status.todo.append("duplicates: files have been scanned since the last hashing.")
-    elif server is not None and str(server["updated_at"]) > str(dup["updated_at"]):
-        status.add(f"duplicates: last run {_when(dup['updated_at'])}, before the server hashes of "
-                   f"{_when(server['updated_at'])}")
-        status.todo.append("duplicates --rescan: server hashes were added after the last run, so more PC files "
-                           "can be compared. Hashes already known are not read again.")
+    _hashes(status, db)
+
+
+def _hashes(status: Status, db: SQLiteDB) -> None:
+    """How many files still lack a full hash. Unreadable files stay in this count until they can be read."""
+    row = db.conn.execute(
+        f"""SELECT COUNT(*) AS n, COALESCE(SUM(f.size), 0) AS bytes
+            FROM files f JOIN folders fo ON fo.id = f.folder_id
+            LEFT JOIN file_hashes h ON h.file_id = f.id
+            WHERE f.is_missing = 0 AND fo.is_missing = 0 AND (h.full_hash IS NULL OR h.full_hash = '')
+              AND (f.attributes & {CLOUD_PLACEHOLDER_MASK}) = 0""").fetchone()
+    if row["n"]:
+        status.add(f"hashes: {row['n']:,} files ({row['bytes'] / 1e9:,.1f} GB) have no full hash")
+        status.todo.append("hash-all: give the remaining files a full hash (it reads only what is missing; files "
+                           "it cannot read are listed in its log).")
     else:
-        status.add(f"duplicates: up to date (last run {_when(dup['updated_at'])})")
-    _duplicates_summary(status, config)
-
-
-def _duplicates_summary(status: Status, config: ScanConfig) -> None:
-    """What the last duplicates run read, from the summary it saves (counting it here would take minutes)."""
-    try:
-        summary = json.loads(summary_path(config).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return
-    status.add(f"    {summary.get('files', 0):,} files share a size; {summary.get('unhashed_before', 0):,} had no hash "
-               f"before that run, which read {summary.get('quick_read', 0):,} quick and "
-               f"{summary.get('full_read', 0):,} full hashes")
-    if summary.get("unreadable"):
-        status.add(f"    {summary['unreadable']:,} files could not be read, so they have no hash; they are tried "
-                   "again on every run")
-    if summary.get("changed_since_scan"):
-        status.add(f"    {summary['changed_since_scan']:,} files had changed since the scan and were not hashed; "
-                   "scan again to include them")
+        status.add("hashes: every file has a full hash")
 
 
 def _reviews(status: Status, config: ScanConfig) -> None:

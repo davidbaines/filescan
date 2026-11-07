@@ -1,3 +1,4 @@
 __pycache__/
 test-temp/
 .env
+pytest-cache-files-*/
