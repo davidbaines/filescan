@@ -1,19 +1,21 @@
-"""Give every file in a build plan a full hash, so verify-coverage can check it.
+"""Give every file a full hash: `filescan hash-all`.
 
-`duplicates` and `hash-server` hash only files whose size occurs more than
-once, because a file with a unique size cannot have a copy. verify-coverage
-and the later cleanup need a hash for every kept file, so `filescan
-hash-missing` hashes the rest: each file that a build plan keeps or copies
-from, and that has no full hash yet.
+Every later step works from content hashes: duplicates, similar folder trees,
+the build plan, verify-coverage and cleanup. So every active file gets a full
+hash, whatever its size, and the database then holds the whole picture.
 
 - PC files are hashed here, with two readers per drive, so a hard disk is not
   made to seek between many files at once. A hash is stored only if the file's
   size and date still match the scan.
-- Server files are hashed on the server by `fsagent hash`, as hash-server does.
+- Server files are hashed on the server by `fsagent hash`.
+- Cloud placeholders are never read (reading one downloads it), and the master
+  root (disk2) is left alone.
 
 It is restartable: hashes are committed every few hundred files, and a second
-run hashes only what is still missing. Files that cannot be read go to the log
-in <filescan folder>\\logs\\ and are tried again on the next run.
+run hashes only what is still missing, so it also suits a top-up after a scan.
+A file whose size or date changes loses its hash at the next scan. Files that
+cannot be read go to the log in the logs folder under the filescan folder and are tried
+again on the next run.
 """
 
 from __future__ import annotations
@@ -30,34 +32,33 @@ from filescan.inventory.server_hash import HashRunner, ServerHasher
 from filescan.models import FileRecord, ScanConfig
 from filescan.progress import SkipLog, progress_bar
 from filescan.storage import FileRepository, SQLiteDB
+from filescan.storage.sql import CLOUD_PLACEHOLDER_MASK
 
 READERS_PER_DRIVE = 2
 COMMIT_EVERY_ROWS = 500
 COMMIT_EVERY_SECONDS = 5.0
 
 
-def latest_plan_id(db: SQLiteDB) -> str | None:
-    try:
-        row = db.conn.execute("SELECT MAX(plan_id) FROM build_manifest").fetchone()
-    except Exception:  # no build plan yet: the table does not exist
-        return None
-    return row[0] if row else None
-
-
-def files_to_hash(db: SQLiteDB, plan_id: str) -> list[FileRecord]:
-    """Active files that the plan keeps or copies from and that have no full hash."""
-    query = """
-        SELECT DISTINCT f.id, f.path, fo.path AS folder, f.filename, f.size, f.mtime, f.ctime
-        FROM (SELECT kept_file_id AS id FROM build_manifest WHERE plan_id = :p
-              UNION SELECT source_file_id FROM build_manifest WHERE plan_id = :p) b
-        JOIN files f ON f.id = b.id
+def files_to_hash(db: SQLiteDB, config: ScanConfig) -> list[FileRecord]:
+    """Active files with no full hash, outside the master root, that are not cloud placeholders."""
+    masters = [str(r.path).rstrip("\\").lower() for r in root_configs(config) if r.role == "master"]
+    query = f"""
+        SELECT f.id, f.path, fo.path AS folder, f.filename, f.size, f.mtime, f.ctime
+        FROM files f
         JOIN folders fo ON fo.id = f.folder_id
         LEFT JOIN file_hashes h ON h.file_id = f.id
-        WHERE f.is_missing = 0 AND (h.full_hash IS NULL OR h.full_hash = '')
+        WHERE f.is_missing = 0 AND fo.is_missing = 0 AND (h.full_hash IS NULL OR h.full_hash = '')
+          AND (f.attributes & {CLOUD_PLACEHOLDER_MASK}) = 0
     """
-    return [FileRecord(path=Path(r["path"]), folder_path=Path(r["folder"]), filename=r["filename"],
-                       size=int(r["size"]), mtime=float(r["mtime"]), ctime=float(r["ctime"]), id=int(r["id"]))
-            for r in db.conn.execute(query, {"p": plan_id})]
+    out = []
+    for r in db.conn.execute(query):
+        low = r["path"].lower()
+        if any(low.startswith(m + "\\") for m in masters):
+            continue
+        out.append(FileRecord(path=Path(r["path"]), folder_path=Path(r["folder"]), filename=r["filename"],
+                              size=int(r["size"]), mtime=float(r["mtime"]), ctime=float(r["ctime"]),
+                              id=int(r["id"])))
+    return out
 
 
 def _drive(record: FileRecord) -> str:
@@ -67,7 +68,7 @@ def _drive(record: FileRecord) -> str:
 def hash_pc_files(db: SQLiteDB, config: ScanConfig, records: list[FileRecord]) -> dict[str, int]:
     """Hash PC files, a few at a time per drive. Returns counts: hashed, unreadable, changed."""
     repo = FileRepository(db)
-    skips = SkipLog(config.filescan_folder, "hash-missing")
+    skips = SkipLog(config.filescan_folder, "hash-all")
     counts = {"hashed": 0, "unreadable": 0, "changed": 0}
     by_drive: dict[str, list[FileRecord]] = {}
     for record in records:
@@ -109,21 +110,17 @@ def hash_pc_files(db: SQLiteDB, config: ScanConfig, records: list[FileRecord]) -
     return counts
 
 
-def run_hash_missing_for_config(config: ScanConfig, *, server_runner: HashRunner | None = None) -> dict:
+def run_hash_all_for_config(config: ScanConfig, *, server_runner: HashRunner | None = None) -> dict:
     db = SQLiteDB(config.database_path)
     try:
-        plan_id = latest_plan_id(db)
-        if plan_id is None:
-            print("No build plan yet: run `filescan build-plan` first.")
-            return {}
-        records = files_to_hash(db, plan_id)
+        records = files_to_hash(db, config)
         roots = root_configs(config)
         pc, server = [], []
         for record in records:
             root = root_for(str(record.path), roots)
             (server if root is not None and root.location == "server" else pc).append(record)
         gb = lambda rs: sum(r.size for r in rs) / 1e9  # noqa: E731
-        print(f"Build plan {plan_id}: {len(pc):,} PC files ({gb(pc):,.1f} GB) and {len(server):,} server files "
+        print(f"{len(pc):,} PC files ({gb(pc):,.1f} GB) and {len(server):,} server files "
               f"({gb(server):,.1f} GB) have no full hash.")
         result = hash_pc_files(db, config, pc) if pc else {}
     finally:
@@ -135,9 +132,8 @@ def run_hash_missing_for_config(config: ScanConfig, *, server_runner: HashRunner
     if pc:
         print(f"PC: {result['hashed']:,} hashed, {result['unreadable']:,} could not be read, "
               f"{result['changed']:,} changed since the scan (scan again to include them).")
-    print("Run `filescan build-plan` again so the plan's manifest carries the new hashes.")
     return result
 
 
-def run_hash_missing(config_path) -> dict:
-    return run_hash_missing_for_config(load_config(config_path))
+def run_hash_all(config_path) -> dict:
+    return run_hash_all_for_config(load_config(config_path))

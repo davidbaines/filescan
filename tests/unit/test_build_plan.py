@@ -233,9 +233,9 @@ def test_keep_in_place_wins_over_a_review_kept_under_another_rule(tmp_path):
     assert meta["items"] == 0 and meta["left_out"] == {"exclusion: ev": 1}
 
 
-def test_hash_missing_hashes_kept_files_once_and_skips_changed_ones(tmp_path):
+def test_hash_all_hashes_every_file_once_and_skips_changed_ones(tmp_path):
     from filescan.config import load_config
-    from filescan.dedupe.hash_missing import run_hash_missing
+    from filescan.dedupe.hash_all import run_hash_all
     from filescan.inventory.scanner import run_scan
     from filescan.storage import SQLiteDB
 
@@ -252,13 +252,12 @@ def test_hash_missing_hashes_kept_files_once_and_skips_changed_ones(tmp_path):
     }))
     (fs / "layout.yml").write_text(f"root_categories: [Docs]\nmap:\n  {pc / 'Docs'}: Docs\n", encoding="utf-8")
     run_scan(config_path)
-    run_build_plan(config_path)
     (pc / "Docs" / "edited.txt").write_text("abcd")  # changed since the scan: not hashed
 
-    first = run_hash_missing(config_path)
+    first = run_hash_all(config_path)
     assert first["hashed"] == 1 and first["changed"] == 1
     db = SQLiteDB(load_config(config_path).database_path)
     hashed = db.conn.execute("SELECT COUNT(*) FROM file_hashes WHERE full_hash IS NOT NULL").fetchone()[0]
     db.close()
     assert hashed == 1
-    assert run_hash_missing(config_path)["hashed"] == 0
+    assert run_hash_all(config_path)["hashed"] == 0
