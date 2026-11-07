@@ -20,7 +20,7 @@ To install filescan on the PC and run it from there:
 
 4. Copy `.env.example` to `.env` in the repository's root folder, and in it set `FILESCAN_CONFIG` to the path of your configuration file. filescan opens that file unless another is given with `--config`.
 5. Create a folder for filescan, such as `C:\filescan`, put the configuration file `config.yml` in it, and set `filescan_folder` in the configuration file to that folder. filescan saves its database there (unless `database_folder` names another folder) and writes every report there, which keeps the files it creates apart from your own.
-6. In the configuration file, list under `roots` the drives and folders to organise, for example `D:\` or `C:\Users\David`. A server share is a UNC path with two leading backslashes, such as `\\192.168.1.100\Photos`, and its entry also needs `location: server` and `server_path`, the folder's path on the server. Folders that should not be scanned at all go in a PC root's `skip` list, or in a server root's `exclude_dirs`.
+6. In the configuration file, list under `roots` the drives and folders to organise, for example `D:\` or `C:\Users\David`. A server share is a UNC path with two leading backslashes, such as `\\192.168.1.100\Photos`, and its entry also needs `location: server` and `server_path`, the folder's path on the server. Folders that should not be scanned at all go in a PC root's `skip` list, or in a server root's `exclude_dirs`. To add an external drive, give it a fixed letter in Disk Management, connect it and run `filescan drives --add K: --name "WD My Book Black"`. This writes a small marker file, `.filescan-volume.yaml`, on the drive so filescan recognises it whatever letter it is on, and adds the drive to `config.yml`, keeping a backup of the previous version. C: never gets a marker; it is recognised by its serial number. `filescan drives` lists every connected drive, and `filescan drives --retire "<name>"` marks a drive that has gone for good, so its files no longer count as copies.
 7. Add to `pinned` any folders that must never be moved, such as cloud-sync folders. Add to `exclusions` the folders to leave out of the organised set, such as old Windows folders and caches. Excluded folders are still scanned and appear in the reports, so you can review them before anything is deleted.
 8. On the server, set up SSH key login from the PC and install `python3-xxhash`, so that file hashes can be calculated there. Put the SSH target in the configuration file under `server: ssh:`, for example `david@192.168.1.100`. filescan sends `server/fsagent.py` to the server over SSH each time, so nothing else needs installing.
 9. `layout.yml`, in the filescan folder, maps each source folder to its place in the organised set. It needs to be correct before you run `build-plan`.
@@ -52,8 +52,10 @@ The reports go into one workbook, `filescan_report.xlsx` in the filescan folder 
 | Exclusions | The folders each exclusion in `config.yml` leaves out of the organised set (old Windows folders, caches, public corpora and so on), with sizes. |
 | Unwanted | Matches of the unwanted-data rules (`src/filescan/cleanup/unwanted_rules.yml`: installers, caches, temporary files, old File History versions), by folder. |
 | Missing from server | PC files with no identical copy on the server, totalled by top folder. |
+| Unreadable | Files and folders filescan could not read or move, by folder (two levels below each drive or share). These come back on every run until you delete them or make them readable yourself; filescan does not change permissions. |
+| Build summary, Unsorted, Renamed, Long paths | The latest build plan (see step 4): files and bytes per category, source folders not in `layout.yml`, files renamed to avoid a clash, and destinations too long for the server or near the Windows limit. |
 
-Each sheet is also written as a CSV. Two lists are CSV only, because they can be longer than Excel allows (1,048,576 rows): every file an unwanted-data rule matches (`unwanted_files.csv`), and every PC file with no copy on the server (`compare_missing_files.csv`). If the workbook is open in Excel when the reports are written, they go to a copy with the date and time in its name.
+Each sheet is also written as a CSV. Some lists are CSV only, because they can be longer than Excel allows (1,048,576 rows): every file an unwanted-data rule matches (`unwanted_files.csv`), every PC file with no copy on the server (`compare_missing_files.csv`), every unreadable item (`unreadable_files.csv`) and the build plan's full lists. The Contents sheet names each one and when it was written. If the workbook is open in Excel when the reports are written, they go to a copy with the date and time in its name.
 
 ### 2. Decide what can go
 
@@ -77,7 +79,7 @@ The cleanup commands record every action in the plan folder, so an interrupted r
 
 | Command | What it does | Changes files? |
 |---|---|---|
-| `filescan build-plan` | Reads `layout.yml` and decides where each kept file goes. It keeps one copy of each content, choosing the location from the entry that comes first in `layout.yml`, keeps Git repositories whole, and renames clashing files `name_from_<source>.ext`. The plan goes to a new folder under `build\`, with lists of what is dropped, renamed and still unsorted. | No |
+| `filescan build-plan` | Reads `layout.yml` and decides where each kept file goes. It keeps one copy of each content, choosing the location from the entry that comes first in `layout.yml`, keeps Git repositories whole, and renames clashing files `name_from_<source>.ext`. The plan goes to a new folder under `build\`, with lists of what is dropped, renamed and still unsorted, and its summary sheets go into the workbook. Only the two newest plans are kept, because each plan folder takes over 1 GB. | No |
 
 Still to be built, in this order:
 
