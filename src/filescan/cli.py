@@ -24,6 +24,7 @@ from filescan.planning.proposals import build_plan_artifact
 from filescan.reporting.exclusions import run_exclusions_report
 from filescan.reporting.largest_files import (_fmt_size, find_large_files,
                                               run_largest)
+from filescan.dedupe.hash_missing import run_hash_missing
 from filescan.planning.build_plan import run_build_plan
 from filescan.reporting.measure import run_measure
 from filescan.reporting.xlsx import write_report
@@ -52,6 +53,7 @@ COMMAND_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("import-server", "List the server roots with fsagent over SSH and load them into the database."),
         ("duplicates", "Hash files that share a size and record groups of identical files."),
         ("hash-server", "Hash, on the server, every server file whose size occurs more than once (resumable)."),
+        ("hash-missing", "Hash every file the latest build plan keeps that has no full hash yet, PC and server (resumable)."),
     ]),
     ("2. Find what can go", [
         ("exclusions-report", "List the folders each exclusion rule leaves out of the organised set, with sizes (CSV)."),
@@ -154,7 +156,7 @@ def build_parser() -> argparse.ArgumentParser:
     execute_parser.add_argument("--plan", type=Path, required=True, help="The approved plan file.")
 
     for name in ("report", "waste", "largest", "import-server", "compare", "hash-server", "unwanted-report",
-                 "measure", "drives", "exclusions-report", "build-plan"):
+                 "measure", "drives", "exclusions-report", "build-plan", "hash-missing"):
         add(name)
     review_parser = add("review")
     review_parser.add_argument("scope", nargs="?", default=None, help="Name of a delete-candidate exclusion rule.")
@@ -353,6 +355,9 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "review":
         _stage_start("review")
         run_review(args.config, args.scope, split_gb=args.split_gb)
+    elif args.command == "hash-missing":
+        _stage_start("hash-missing")
+        run_hash_missing(args.config)
     elif args.command == "build-plan":
         _stage_start("build-plan")
         run_build_plan(args.config)

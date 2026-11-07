@@ -12,8 +12,9 @@ from tqdm import tqdm
 T = TypeVar("T")
 
 
-def progress_bar(*, desc: str, total: int | None = None, unit: str = "item") -> tqdm:
-    return tqdm(total=total, desc=desc, unit=unit, leave=True)
+def progress_bar(*, desc: str, total: int | None = None, unit: str = "item", unit_scale: bool = False) -> tqdm:
+    """unit_scale=True with unit="B" shows bytes as kB, MB, GB."""
+    return tqdm(total=total, desc=desc, unit=unit, unit_scale=unit_scale, leave=True)
 
 
 def track(iterable: Iterable[T], *, desc: str, total: int | None = None, unit: str = "item") -> Iterator[T]:

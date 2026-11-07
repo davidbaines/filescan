@@ -231,3 +231,34 @@ def test_keep_in_place_wins_over_a_review_kept_under_another_rule(tmp_path):
     db.close()
     meta = json.loads((run_build_plan(config_path) / "plan.json").read_text(encoding="utf-8"))
     assert meta["items"] == 0 and meta["left_out"] == {"exclusion: ev": 1}
+
+
+def test_hash_missing_hashes_kept_files_once_and_skips_changed_ones(tmp_path):
+    from filescan.config import load_config
+    from filescan.dedupe.hash_missing import run_hash_missing
+    from filescan.inventory.scanner import run_scan
+    from filescan.storage import SQLiteDB
+
+    pc = tmp_path / "pc"
+    (pc / "Docs").mkdir(parents=True)
+    (pc / "Docs" / "unique.txt").write_text("only one of this size")
+    (pc / "Docs" / "edited.txt").write_text("abc")
+    fs = tmp_path / "fs"
+    fs.mkdir()
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump({
+        "roots": [{"path": str(pc)}], "filescan_folder": str(fs), "database_folder": str(fs),
+        "database_filename": "db.sqlite", "report_filename": "r.xlsx", "min_file_size": 0,
+    }))
+    (fs / "layout.yml").write_text(f"root_categories: [Docs]\nmap:\n  {pc / 'Docs'}: Docs\n", encoding="utf-8")
+    run_scan(config_path)
+    run_build_plan(config_path)
+    (pc / "Docs" / "edited.txt").write_text("abcd")  # changed since the scan: not hashed
+
+    first = run_hash_missing(config_path)
+    assert first["hashed"] == 1 and first["changed"] == 1
+    db = SQLiteDB(load_config(config_path).database_path)
+    hashed = db.conn.execute("SELECT COUNT(*) FROM file_hashes WHERE full_hash IS NOT NULL").fetchone()[0]
+    db.close()
+    assert hashed == 1
+    assert run_hash_missing(config_path)["hashed"] == 0
