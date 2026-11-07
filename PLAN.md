@@ -232,11 +232,15 @@ To build:
 
 - [x] **[USER]** Write `layout.yml`, mapping each source top folder to a category. Anything unmapped goes to `Unsorted/<origin>`.
   - Done 6 November: `C:\filescan\v2\layout.yml` has 59 mappings and 10 folders that stay in place, and every destination is in `root_categories`.
-- [ ] New command `filescan build-plan`.
-  - It produces one layout manifest, `hash → destination`, shared by the master and the PC.
-  - Near-duplicate trees are merged with the existing cluster logic; pinned folders and Git repositories are copied whole.
-  - Name conflicts follow the agreed rule, `file_from_SourceFolder.ext`.
-  - It writes two copy lists: server to server for `fsagent copy`, and PC to disk2 for `ExecutionRunner`, which keeps mtimes.
+- [x] New command `filescan build-plan`, 7 November.
+  - It produces one layout manifest, `hash → destination`, shared by the master and the PC, in `build\<plan id>\` and the `build_manifest` table.
+  - One copy of each content; the entry that comes first in `layout.yml` keeps it (decided 7 November). Folders mapped to the same place merge by name, which replaces the cluster logic.
+  - Git repositories (a folder with `.git\HEAD`) are kept whole and stay out of the deduplication. Pinned and `stay_in_place` folders are left to the Phase 7 mirror (decided 7 November).
+  - Name conflicts become `file_from_<label>.ext`, with the label taken from the drive and path (`F-Data-D-Work`), because most merged sources share their last folder name.
+  - It writes two copy lists: server to server for `fsagent copy` (`server_copy.jsonl`), and PC to disk2 (`pc_copy.csv`). Each copy takes the kept file's mtime.
+  - First real plan, `20261107-111552`: 1,670,517 files, 2,125 GB (740 GB copied within the server, 1,386 GB from the PC). Unsorted 453 GB, of which 337 GB is the two Acronis folders kept in review. 354,843 kept files (1,237 GB) have no full hash, mostly because their size is unique; they need one before verify-coverage.
+- [ ] **[USER]** Review the plan: `unsorted.csv` (extend `layout.yml`), `renamed.csv` (79,638 of the 80,989 renames are in Downloads, where five sources merge) and `summary.csv`.
+- [ ] New command `copy-master`: run the copy lists, hashing files that have no full hash as they are copied and storing the result.
 - [ ] Run the copies, overflowing whole categories to disk1 if needed.
 - [ ] **[GATE]** New command `filescan verify-coverage`: every kept source hash is in the master.
 
