@@ -134,6 +134,7 @@ def _parse_root(item: dict[str, Any]) -> RootConfig:
         exclude_dirs=exclude_dirs,
         name=str(item.get("name") or ""),
         serial=str(item.get("serial") or "").strip().upper(),
+        volume_id=str(item.get("volume_id") or "").strip(),
     )
 
 

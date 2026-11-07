@@ -12,11 +12,12 @@ from filescan.inventory.full_scan import run_full_scan
 from filescan.inventory.preflight import check_db_space, check_stale_roots
 from filescan.inventory.scanner import run_scan
 from filescan.inventory.server_import import run_import_server
-from filescan.inventory.volumes import run_drives
+from filescan.inventory.volumes import add_drive, retire_drive, run_drives
 from filescan.planning.build_plan import run_build_plan
 from filescan.reporting.report import run_reports
 from filescan.review.app import run_review
 from filescan.status import run_status
+from filescan.storage import SQLiteDB
 from filescan.storage.db import validate_database_ready
 
 # The help lists commands in these groups, in the order they are normally used.
@@ -97,7 +98,7 @@ def build_parser() -> argparse.ArgumentParser:
     def add(name: str) -> argparse.ArgumentParser:
         return subparsers.add_parser(name, help=HELP[name], description=HELP[name], prog=f"filescan {name}")
 
-    for name in ("status", "drives", "import-server", "hash-all", "report", "build-plan"):
+    for name in ("status", "import-server", "hash-all", "report", "build-plan"):
         add(name)
 
     for name in ("scan", "scan-pc"):
@@ -126,6 +127,13 @@ def build_parser() -> argparse.ArgumentParser:
             sub.add_argument("--older-than-days", type=float, default=14.0,
                              help="Only files quarantined at least this long ago (default 14).")
             sub.add_argument("--yes", action="store_true", help="Really delete. Without it, only report what would go.")
+
+    drives = add("drives")
+    drives.add_argument("--add", metavar="LETTER", help="Register the drive on this letter, e.g. K: (writes a "
+                        "marker file on it and adds it to config.yml, keeping a backup).")
+    drives.add_argument("--name", help="Friendly name for --add, e.g. \"WD My Book Black\".")
+    drives.add_argument("--retire", metavar="NAME", help="Mark every file of a drive that has gone for good as "
+                        "missing, so it no longer counts as a copy. Changes only the database.")
 
     df = add("delete-folder")
     df.add_argument("folders", nargs="+", help="PC folders to delete, each with everything below it.")
@@ -174,7 +182,18 @@ def main(argv: list[str] | None = None) -> int:
     if command == "status":
         run_status(config, config_path=args.config, config_source=args.config_source)
     elif command == "drives":
-        run_drives(config)
+        if args.add:
+            if not args.name:
+                raise SystemExit('--add needs --name, for example: filescan drives --add K: --name "WD My Book Black"')
+            add_drive(args.config, config, args.add, args.name)
+        elif args.retire:
+            db = SQLiteDB(config.database_path)
+            try:
+                retire_drive(config, args.retire, db)
+            finally:
+                db.close()
+        else:
+            run_drives(config)
     elif command == "scan":
         failed = run_full_scan(args.config, rescan=args.rescan, delta=not args.rescan)
         return 1 if failed else 0

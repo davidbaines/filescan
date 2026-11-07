@@ -35,6 +35,7 @@ class RootConfig:
     exclude_dirs: tuple[str, ...] = ()  # folder names fsagent leaves out, e.g. lost+found
     name: str = ""  # friendly name, e.g. LaCie Quadra
     serial: str = ""  # volume serial number as `vol` shows it, e.g. A1B2-C3D4; checked before scanning
+    volume_id: str = ""  # from the drive's marker file (`filescan drives --add`); see inventory/volumes.py
 
 
 @dataclass(frozen=True, slots=True)

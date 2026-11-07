@@ -9,7 +9,7 @@ from pathlib import Path
 
 from filescan.config import load_config
 from filescan.inventory.normalizer import normalize_path
-from filescan.inventory.volumes import root_problem
+from filescan.inventory.volumes import MARKER, root_problem
 from filescan.models import FileRecord, FolderRecord, ScanConfig
 from filescan.progress import SkipLog, progress_bar
 from filescan.storage import FileRepository, SQLiteDB
@@ -70,8 +70,8 @@ class InventoryScanner:
         On Windows the stat comes from the directory listing, so this costs no
         extra filesystem call, which matters on network shares.
         """
-        if Path(entry.name).suffix.lower() in self.config.exclude_extensions:
-            return None
+        if Path(entry.name).suffix.lower() in self.config.exclude_extensions or entry.name == MARKER:
+            return None  # the drive marker belongs to filescan, not to the user's files
         try:
             stat = entry.stat(follow_symlinks=False)
         except OSError as exc:
