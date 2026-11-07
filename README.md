@@ -68,7 +68,7 @@ Each sheet is also written as a CSV. Two lists are CSV only, because they can be
 | `filescan cleanup-plan` | Lists every file in a folder you marked trash, and every file matched by a delete-candidate rule, in a new plan folder under `cleanup\`. Each file is marked "covered" if an identical copy is kept elsewhere, or "unique". | No |
 | `filescan cleanup --plan <folder>` | Moves the plan's files into `_filescan_quarantine` on the same disk. `--dry-run` only counts. | **Moves** (reversible) |
 | `filescan cleanup-restore --plan <folder>` | Puts a plan's quarantined files back where they were. | **Moves** |
-| `filescan cleanup-purge --plan <folder> --yes` | Deletes a plan's quarantined files for good, once they have been in quarantine for 14 days. Without `--yes` it only reports. A covered file is kept if its copy has since gone. | **Deletes** |
+| `filescan cleanup-purge --plan <folder> --yes` | Deletes a plan's quarantined files for good, once they have been in quarantine for 14 days. Without `--yes` it only reports. A covered file stays in quarantine if its copy has since gone or changed. | **Deletes** |
 | `filescan delete-folder <folder>` | For whole PC folders that are plainly not wanted. It reports what the folder holds and which files have no copy elsewhere; with `--yes` it deletes the folders. It refuses a folder reached through a junction or link and never follows one. `--take-ownership` fixes permissions one folder at a time, never on C:, and needs an elevated terminal. | **Deletes** with `--yes` |
 
 The cleanup commands record every action in the plan folder, so an interrupted run carries on where it stopped.
@@ -90,7 +90,7 @@ After that, a plain mirror from the PC to disk2 keeps the server copy up to date
 
 ## Where things are written
 
-Everything goes in the configured `filescan_folder` (`C:\filescan\v2`):
+Everything goes in the configured `filescan_folder`, for example `C:\filescan`:
 
 - `file_index.db`: the database, the record of every file, hash and decision;
 - `filescan_report.xlsx` and the report CSVs named above;
@@ -101,7 +101,7 @@ Everything goes in the configured `filescan_folder` (`C:\filescan\v2`):
 
 ## Older code
 
-The first prototype and the older merge workflow (`run`, `similarity`, `plan`, `merge-review`, `execute`, `report`, `waste`, `largest`, `clusters`, `duplicates` and `hash-server`) are in `unused/`. They are not used, tested or maintained, and can be restored from there if needed.
+The first prototype and the older merge workflow (`run`, `similarity`, `plan`, `merge-review`, `execute`, the old Excel `report`, `waste`, `largest`, `clusters`, `duplicates` and `hash-server`) are in `unused/`. They are not used, tested or maintained, and can be restored from there if needed. The separate report commands (`exclusions-report`, `unwanted-report`, `measure` and `compare`) are now part of `report`.
 
 ## Tests
 
