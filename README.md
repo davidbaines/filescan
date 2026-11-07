@@ -4,19 +4,28 @@ filescan brings the files on a Windows PC and a Linux home server together into 
 
 The work follows [PLAN.md](PLAN.md). Project rules for coding agents are in [AGENTS.md](AGENTS.md).
 
-## Setting up
+## Installation and initial configuration
 
-1. Install the dependencies: `poetry install`.
-2. Copy `.env.example` to `.env` and set `FILESCAN_CONFIG` to your configuration file, for example `C:\filescan\v2\config.yml`. Every command then finds it without `--config`.
-3. In `config.yml`, list the roots (PC drives and folders, and the server shares as UNC paths such as `\\192.168.1.133\disk3`), the exclusions and the pinned folders. The database and every report go in `filescan_folder`.
-4. For the server, set up SSH key login and install `python3-xxhash` there. filescan sends `server/fsagent.py` to the server over SSH each time, so nothing else needs installing.
-5. Write `layout.yml` in the filescan folder before running `build-plan`. It maps each source folder to its place in the organised set.
+To install filescan on the PC and run it from there:
 
-## Start here
+1. Install Python 3.12 or later. filescan does not install on earlier versions.
+2. Install Poetry. Version 1.7.1 was used during development; other versions should work.
+3. Clone the repository, change to its folder and install the dependencies:
 
-Run `filescan status` whenever you come back to the work. It reads the database and the reports, shows what has been done, and lists what to run next, in order. It never changes anything.
+   ```
+   git clone https://github.com/davidbaines/filescan
+   cd filescan
+   poetry install
+   ```
 
-Run `filescan` with no command to see every command grouped by step, and `filescan <command> -h` for a command's options.
+4. Copy `.env.example` to `.env` in the repository's root folder, and in it set `FILESCAN_CONFIG` to the path of your configuration file. filescan opens that file unless another is given with `--config`.
+5. Create a folder for filescan, such as `C:\filescan`, put the configuration file `config.yml` in it, and set `filescan_folder` in the configuration file to that folder. filescan saves its database there (unless `database_folder` names another folder) and writes every report there, which keeps the files it creates apart from your own.
+6. In the configuration file, list under `roots` the drives and folders to organise, for example `D:\` or `C:\Users\David`. A server share is a UNC path with two leading backslashes, such as `\\192.168.1.100\Photos`, and its entry also needs `location: server` and `server_path`, the folder's path on the server. Folders that should not be scanned at all go in a PC root's `skip` list, or in a server root's `exclude_dirs`.
+7. Add to `pinned` any folders that must never be moved, such as cloud-sync folders. Add to `exclusions` the folders to leave out of the organised set, such as old Windows folders and caches. Excluded folders are still scanned and appear in the reports, so you can review them before anything is deleted.
+8. On the server, set up SSH key login from the PC and install `python3-xxhash`, so that file hashes can be calculated there. Put the SSH target in the configuration file under `server: ssh:`, for example `david@192.168.1.100`. filescan sends `server/fsagent.py` to the server over SSH each time, so nothing else needs installing.
+9. `layout.yml`, in the filescan folder, maps each source folder to its place in the organised set. It needs to be correct before you run `build-plan`.
+10. Run `filescan status`. It reads the database and the reports, shows what has been done and lists what to do next. It changes nothing.
+11. Run `filescan --help` for a list of the commands, and `filescan <command> --help` for a command's options. The rest of this README describes each step.
 
 ## The steps in order
 
