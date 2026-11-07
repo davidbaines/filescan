@@ -144,7 +144,8 @@ Files are scattered across the PC (C: user folders, D:, E:, F:), the LaCie J: an
   - Server roots need `server_path` and may list `exclude_dirs` (for example `lost+found`); the SSH target is the top-level `server: {ssh: david@192.168.1.133}`.
   - A failed or empty listing raises an error before anything is marked missing.
   - Convert the server's `mtime_ns` to the stored float in one shared function. The stale-hash check compares mtimes exactly, so any drift would clear every server hash on each re-import.
-- [ ] **Record what the import couldn't take.** Listing errors (such as permission denied) are only printed, and unrepresentable names only go to a CSV. Store both in the database, and make the gate before any wipe count them alongside the excluded bytes.
+- [x] **Record what the import couldn't take.** Done 8 November: an `access_problems` table holds what `scan`, `import-server` and hashing could not read, including server names Windows cannot represent; each step replaces only what it tried again. The workbook's Unreadable sheet lists them by folder, with files cleanup could not quarantine. filescan does not change permissions; the user deletes or deals with these folders.
+  - [ ] Make the gate before any wipe count them alongside the excluded bytes.
 
 ### Phase 3: task 2, which files the server lacks
 
@@ -199,7 +200,7 @@ Files are scattered across the PC (C: user folders, D:, E:, F:), the LaCie J: an
 
 ### Phase 4b: drive identity and more external drives
 
-Start after the first quarantine (Phase 6, "Review the first plan"), so the schema stays stable while a plan is in use. Two more drives are due: a WD My Book Black on USB (K:) and a networked WD My Book White.
+Built 8 November, while two cleanup plans are in quarantine: the change only adds a table and a marker check, and a root without a marker still passes on its serial, so the plans in use are unaffected. Two more drives are due: a WD My Book Black on USB (K:) and a networked WD My Book White.
 
 Decided on 6 November:
 
@@ -218,13 +219,14 @@ Decided on 6 November:
 To build:
 
 - [x] Check each PC root's volume serial before scanning or cleanup, and skip a root on the wrong drive without marking its files missing. `filescan drives` lists the roots and their serials. Done 6 November; names and serials are in `C:\filescan\v2\config.yml`.
-- [ ] A `volumes` table: volume ID, fingerprint, expected letter, the letter last seen and when. The config holds what you declare (letter, name, volume ID); the database holds what filescan observes.
-- [ ] `filescan drives` lists every connected volume, with its letter, size, label, model and bus type, and marks the ones the config doesn't know. For a new one it asks for a friendly name, writes the marker and adds the root to `config.yml`. It also takes a one-line form, `drives --add K: --name "WD My Book Black"`.
+- [x] A `volumes` table: volume ID, fingerprint, expected letter, the letter last seen and when. The config holds what you declare (letter, name, volume ID); the database holds what filescan observes.
+- [x] `filescan drives` lists every connected volume, with its letter, size, label and file system (model and bus type need elevation, so they are left out), and marks the ones the config doesn't know. For a new one it asks for a friendly name, writes the marker and adds the root to `config.yml`. It also takes a one-line form, `drives --add K: --name "WD My Book Black"`.
   - Insert the new lines as text, keeping your comments. Back up the config and show the change before writing.
-- [ ] The scan and the cleanup commands check the marker rather than only the serial. A root on the wrong letter is skipped with a message naming the letter it is on now.
-- [ ] Leave markers out of the inventory, out of the master build and out of the PC → disk2 mirror.
-- [ ] C: is the system drive, and writing to `C:\` needs an elevated terminal. Decide whether C: gets a marker, written once from an elevated terminal, or is checked by serial only. It never changes letter.
-- [ ] A way to retire a drive that has gone for good or been reformatted, such as `drives --retire "LaCie Quadra"`. It marks the drive's files missing, so they no longer count as copies.
+- [x] The scan and the cleanup commands check the marker as well as the serial. A root on the wrong letter is skipped with a message naming the letter it is on now.
+- [x] Leave markers out of the inventory (and so out of the master build).
+  - [ ] Leave them out of the PC → disk2 mirror (Phase 7).
+- [x] C: is the system drive, and writing to `C:\` needs an elevated terminal. Decided 8 November: C: gets no marker and is checked by serial only, since nothing on C: changes without the user's approval.
+- [x] A way to retire a drive that has gone for good or been reformatted, such as `drives --retire "LaCie Quadra"`. It marks the drive's files missing, so they no longer count as copies.
 - [ ] **[USER]** Give the WD My Book Black the letter K: in Disk Management, then register it with `drives`, scan it and run `duplicates`.
 - [ ] **[USER]** Check whether Explorer can open the My Book White's share. Older models only offer SMB1, which Windows 10 turns off. If so, choose between turning on the SMB1 client for the copy and mounting the share on the server for `fsagent` to list.
 
@@ -239,7 +241,7 @@ To build:
   - Name conflicts become `file_from_<label>.ext`, with the label taken from the drive and path (`F-Data-D-Work`), because most merged sources share their last folder name.
   - It writes two copy lists: server to server for `fsagent copy` (`server_copy.jsonl`), and PC to disk2 (`pc_copy.csv`). Each copy takes the kept file's mtime.
   - First real plan, `20261107-111552`: 1,670,517 files, 2,125 GB (740 GB copied within the server, 1,386 GB from the PC). Unsorted 453 GB, of which 337 GB is the two Acronis folders kept in review. 354,843 kept files (1,237 GB) have no full hash, mostly because their size is unique; they need one before verify-coverage.
-- [ ] **[USER]** Review the plan: `unsorted.csv` (extend `layout.yml`), `renamed.csv` (79,638 of the 80,989 renames are in Downloads, where five sources merge) and `summary.csv`.
+- [ ] **[USER]** Review the plan: the workbook's Build summary, Unsorted and Renamed sheets (since 8 November `build-plan` adds them to `filescan_report.xlsx`). The figures from 7 November predate the full hashing and the Downloads change, so run `build-plan` again first.
 - [x] **Simplified, 7 November.** `hash-all` gives every file a full hash, so `duplicates` and `hash-server` are retired and `compare` only reads. The older merge workflow and the first prototype moved to `unused/`. README.md gives the order of the commands. `scan` now runs the whole inventory (drives, scan-pc, import-server, hash-all) and then writes every report to one workbook, `filescan_report.xlsx`; `report` rewrites them without scanning. The single steps remain for when only one is needed. A review of the whole codebase led to fixes in `delete-folder` (a folder reached through a junction above it is refused, and `takeown`/`icacls` refuse any target on C: or through a link) and in the quarantine (a failed restore or purge can be run again; a purge checks the copy's hash and date).
 - [ ] New command `similar-trees`: folder trees contained in, or nearly the same as, another tree, for review. Then measure one copy per tree against one copy per file, and decide.
 - [ ] New command `copy-master`: run the copy lists, verified by hash, keeping each file's date.
