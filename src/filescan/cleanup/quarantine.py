@@ -17,20 +17,24 @@ copy of anything, and the scanner never indexes the quarantine folder.
 
 `cleanup-purge` deletes quarantined files for good, only once they have sat in
 quarantine for a number of days (14 by default), and only with --yes. A
-"covered" file is purged only if its copy is still there with the same size;
-otherwise it stays in quarantine and is reported.
+"covered" file is purged only if its copy is still in the database with the same
+hash, and on disk with the same size and date; otherwise it stays in quarantine
+and is reported.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import json
+import re
+import shlex
 import subprocess
 from collections import Counter
 from collections.abc import Callable, Iterable
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from filescan.cleanup.delete_folder import long_path
 from filescan.cleanup.plan import PlanEntry, gb, read_plan, root_configs, root_for
 from filescan.config import load_config
 from filescan.inventory.server_hash import WORK_DIR, unc_to_posix
@@ -62,18 +66,20 @@ def quarantine_path(path: str, root: RootConfig, plan_id: str) -> str:
 def ssh_runner(config: ScanConfig, plan_id: str) -> ServerRunner:
     def run(root: RootConfig, op: str, entries: list[dict]) -> Iterable[dict]:
         name = root.path.name or str(root.path).strip("\\").replace("\\", "_")
+        name = re.sub(r"[^A-Za-z0-9._-]", "_", name)  # the job name goes into remote shell commands
         # A new job per run: whether a file still needs moving is decided from
         # the disk (move_one treats "gone from src, present at dst" as moved),
         # never from an earlier run's log.
         job = f"{WORK_DIR}/cleanup-{plan_id}-{op}-{name}-{datetime.now():%Y%m%d-%H%M%S}"
         ssh = ["ssh", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=60", config.server_ssh]
         payload = "".join(json.dumps(e) + "\n" for e in entries).encode("utf-8", "surrogateescape")
-        subprocess.run(ssh + [f"mkdir -p {WORK_DIR} && cat > {job}.manifest.jsonl"], input=payload, check=True)
+        manifest, log = shlex.quote(f"{job}.manifest.jsonl"), shlex.quote(f"{job}.log.jsonl")
+        subprocess.run(ssh + [f"mkdir -p {WORK_DIR} && cat > {manifest}"], input=payload, check=True)
         with FSAGENT.open("rb") as script:
             # fsagent prints progress on stderr; a non-zero exit only means some files failed.
-            subprocess.run(ssh + [config.server_python, "-", op, "--manifest", f"{job}.manifest.jsonl",
-                                  "--log", f"{job}.log.jsonl"], stdin=script, check=False)
-        out = subprocess.run(ssh + [f"cat {job}.log.jsonl"], capture_output=True, check=True).stdout
+            subprocess.run(ssh + [config.server_python, "-", op, "--manifest", manifest, "--log", log],
+                           stdin=script, check=False)
+        out = subprocess.run(ssh + [f"cat {log}"], capture_output=True, check=True).stdout
         for line in out.decode("utf-8", "surrogateescape").splitlines():
             line = line.strip()
             if line.startswith("{") and line.endswith("}"):
@@ -99,8 +105,25 @@ def _read_log(folder: Path) -> list[dict]:
 
 
 def last_states(folder: Path) -> dict[str, dict]:
-    """The latest logged record for each original path."""
+    """The latest logged record for each original path, whatever its outcome."""
     return {r["path"]: r for r in _read_log(folder)}
+
+
+def in_quarantine(folder: Path) -> dict[str, str]:
+    """Original path -> when it was quarantined, for every file that is in quarantine now.
+
+    Decided by the last successful move, not the last record: a restore or purge
+    that failed (a conflict, an error) leaves the file in quarantine, and the
+    next restore or purge must still be able to act on it.
+    """
+    state: dict[str, str] = {}
+    for r in _read_log(folder):
+        op, status = r.get("op"), r.get("status")
+        if op == "quarantine" and status == "moved":
+            state[r["path"]] = r["at"]
+        elif (op == "restore" and status == "moved") or (op == "purge" and status in ("purged", "missing")):
+            state.pop(r["path"], None)
+    return state
 
 
 class _Log:
@@ -177,10 +200,12 @@ def _execute(config: ScanConfig, folder: Path, jobs: list[tuple[PlanEntry, RootC
         local = [j for j in jobs if j[1].location != "server"]
         with progress_bar(desc=f"{op} on the PC", total=len(local), unit="file") as bar:
             for entry, _root, action in local:
+                # Extended-length paths: the quarantine folder adds about 37 characters to each path.
                 if op == "move":
-                    result = fsagent.move_one(action["src"], action["dst"], entry.size, entry.mtime, action["stop"])
+                    result = fsagent.move_one(long_path(action["src"]), long_path(action["dst"]), entry.size,
+                                              entry.mtime, long_path(action["stop"]))
                 else:
-                    result = fsagent.remove_one(action["path"], entry.size, action["stop"])
+                    result = fsagent.remove_one(long_path(action["path"]), entry.size, long_path(action["stop"]))
                 record = {"path": entry.path, "op": action["op"], **result}
                 log.write(record)
                 on_result(entry, record)
@@ -221,10 +246,10 @@ def _execute(config: ScanConfig, folder: Path, jobs: list[tuple[PlanEntry, RootC
 def quarantine(config: ScanConfig, plan_path: Path, *, only: str | None = None, dry_run: bool = False,
                runner: ServerRunner | None = None, reason: str | None = None) -> Counter:
     folder, entries = read_plan(plan_path)
-    states = last_states(folder)
+    quarantined = in_quarantine(folder)
     jobs = []
     for entry, root in _jobs(entries, config, only, reason):
-        if states.get(entry.path, {}).get("status") == "moved" and states[entry.path].get("op") == "quarantine":
+        if entry.path in quarantined:
             continue  # already in quarantine
         jobs.append((entry, root, {"op": "quarantine", "src": entry.path,
                                    "dst": quarantine_path(entry.path, root, folder.name),
@@ -249,11 +274,10 @@ def quarantine(config: ScanConfig, plan_path: Path, *, only: str | None = None, 
 def restore(config: ScanConfig, plan_path: Path, *, only: str | None = None,
             runner: ServerRunner | None = None, reason: str | None = None) -> Counter:
     folder, entries = read_plan(plan_path)
-    states = last_states(folder)
+    quarantined = in_quarantine(folder)
     jobs = []
     for entry, root in _jobs(entries, config, only, reason):
-        state = states.get(entry.path, {})
-        if state.get("status") == "moved" and state.get("op") == "quarantine":
+        if entry.path in quarantined:
             jobs.append((entry, root, {"op": "restore", "src": quarantine_path(entry.path, root, folder.name),
                                        "dst": entry.path, "stop": quarantine_root(root)}))
     db = SQLiteDB(config.database_path)
@@ -269,38 +293,60 @@ def restore(config: ScanConfig, plan_path: Path, *, only: str | None = None,
     return counts
 
 
-def _copy_still_there(entry: PlanEntry, roots: list[RootConfig] | None = None) -> bool:
-    copy_root = root_for(entry.copy_path, roots or [])
-    if copy_root is not None and copy_root.location == "pc" and copy_root.serial and root_problem(copy_root):
-        return False  # the right drive is not on that letter, so the copy cannot be confirmed
-    try:
-        return Path(entry.copy_path).stat().st_size == entry.size
-    except OSError:
-        return False
+class _CopyCheck:
+    """Is a covered file's copy still there, unchanged? Asked once per covered file before a purge."""
+
+    def __init__(self, db: SQLiteDB, roots: list[RootConfig]) -> None:
+        self.db = db
+        self.roots = roots
+        self.problems: dict[RootConfig, str | None] = {}
+
+    def __call__(self, entry: PlanEntry) -> bool:
+        copy_root = root_for(entry.copy_path, self.roots)
+        if copy_root is not None and copy_root.location == "pc" and copy_root.serial:
+            if copy_root not in self.problems:
+                self.problems[copy_root] = root_problem(copy_root)
+            if self.problems[copy_root]:
+                return False  # the right drive is not on that letter, so the copy cannot be confirmed
+        row = self.db.conn.execute(
+            """SELECT f.size, f.mtime, h.full_hash FROM files f LEFT JOIN file_hashes h ON h.file_id = f.id
+               WHERE f.path = ? AND f.is_missing = 0""", (entry.copy_path,)).fetchone()
+        if row is None or row["full_hash"] != entry.full_hash or int(row["size"]) != entry.size:
+            return False  # the database no longer knows it as an identical copy
+        try:
+            st = Path(entry.copy_path).stat()
+        except OSError:
+            return False
+        # Same size and date as when it was hashed: the content is the one the hash describes.
+        return st.st_size == entry.size and st.st_mtime == float(row["mtime"])
 
 
 def purge(config: ScanConfig, plan_path: Path, *, older_than_days: float = 14, yes: bool = False,
           only: str | None = None, runner: ServerRunner | None = None,
           now: datetime | None = None, reason: str | None = None) -> Counter:
     folder, entries = read_plan(plan_path)
-    states = last_states(folder)
+    quarantined = in_quarantine(folder)
     cutoff = (now or datetime.now()) - timedelta(days=older_than_days)
     jobs, held = [], Counter()
-    for entry, root in _jobs(entries, config, only, reason):
-        state = states.get(entry.path, {})
-        if not (state.get("status") == "moved" and state.get("op") == "quarantine"):
-            continue
-        if datetime.fromisoformat(state["at"]) > cutoff:
-            held["in quarantine for less than the waiting period"] += 1
-            continue
-        if entry.status == "covered" and not _copy_still_there(entry, root_configs(config)):
-            held["its copy is no longer there"] += 1
-            continue
-        jobs.append((entry, root, {"op": "purge", "path": quarantine_path(entry.path, root, folder.name),
-                                   "stop": quarantine_root(root)}))
+    db = SQLiteDB(config.database_path)
+    try:
+        copy_is_there = _CopyCheck(db, root_configs(config))
+        for entry, root in _jobs(entries, config, only, reason):
+            if entry.path not in quarantined:
+                continue
+            if datetime.fromisoformat(quarantined[entry.path]) > cutoff:
+                held["in quarantine for less than the waiting period"] += 1
+                continue
+            if entry.status == "covered" and not copy_is_there(entry):
+                held["its copy is gone or has changed"] += 1
+                continue
+            jobs.append((entry, root, {"op": "purge", "path": quarantine_path(entry.path, root, folder.name),
+                                       "stop": quarantine_root(root)}))
+    finally:
+        db.close()
     size = sum(e.size for e, _, _ in jobs)
-    for reason, n in held.items():
-        print(f"Kept in quarantine ({reason}): {n:,} files")
+    for why, n in held.items():
+        print(f"Kept in quarantine ({why}): {n:,} files")
     if not yes:
         print(f"{len(jobs):,} quarantined files ({gb(size)}) can be deleted for good. "
               "Nothing was deleted; add --yes to delete them.")

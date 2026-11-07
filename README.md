@@ -51,7 +51,7 @@ Every later step compares files by these hashes. Two files count as the same onl
 | `filescan cleanup --plan <folder>` | Moves the plan's files into `_filescan_quarantine` on the same disk. `--dry-run` only counts. | **Moves** (reversible) |
 | `filescan cleanup-restore --plan <folder>` | Puts a plan's quarantined files back where they were. | **Moves** |
 | `filescan cleanup-purge --plan <folder> --yes` | Deletes a plan's quarantined files for good, once they have been in quarantine for 14 days. Without `--yes` it only reports. A covered file is kept if its copy has since gone. | **Deletes** |
-| `filescan delete-folder <folder>` | For whole PC folders that are plainly not wanted. It reports what the folder holds and which files have no copy elsewhere; with `--yes` it deletes the folders. It never follows a junction or link and never works on C:. `--take-ownership` fixes permissions one folder at a time and needs an elevated terminal. | **Deletes** with `--yes` |
+| `filescan delete-folder <folder>` | For whole PC folders that are plainly not wanted. It reports what the folder holds and which files have no copy elsewhere; with `--yes` it deletes the folders. It refuses a folder reached through a junction or link and never follows one. `--take-ownership` fixes permissions one folder at a time, never on C:, and needs an elevated terminal. | **Deletes** with `--yes` |
 
 The cleanup commands record every action in the plan folder, so an interrupted run carries on where it stopped.
 

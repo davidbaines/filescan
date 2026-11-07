@@ -67,37 +67,6 @@ class SQLiteDB:
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
-            CREATE TABLE IF NOT EXISTS duplicate_groups (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                full_hash TEXT NOT NULL,
-                size_bytes INTEGER NOT NULL,
-                file_count INTEGER NOT NULL,
-                total_bytes INTEGER NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(full_hash, size_bytes)
-            );
-
-            CREATE TABLE IF NOT EXISTS duplicate_group_members (
-                group_id INTEGER NOT NULL REFERENCES duplicate_groups(id),
-                file_id INTEGER NOT NULL UNIQUE REFERENCES files(id),
-                PRIMARY KEY (group_id, file_id)
-            );
-
-            CREATE TABLE IF NOT EXISTS folder_similarity_candidates (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                folder_a_id INTEGER NOT NULL REFERENCES folders(id),
-                folder_b_id INTEGER NOT NULL REFERENCES folders(id),
-                score REAL NOT NULL,
-                shared_duplicate_files INTEGER NOT NULL,
-                shared_signatures INTEGER NOT NULL,
-                name_bonus REAL NOT NULL,
-                size_ratio REAL NOT NULL,
-                file_count_ratio REAL NOT NULL,
-                reason TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE (folder_a_id, folder_b_id)
-            );
-
             CREATE TABLE IF NOT EXISTS scan_stats (
                 root_path TEXT PRIMARY KEY,
                 scan_run_id INTEGER NOT NULL,
@@ -232,24 +201,6 @@ class SQLiteDB:
             """
         )
 
-        self._ensure_column("duplicate_groups", "created_at", "TEXT")
-        self.conn.execute(
-            """
-            UPDATE duplicate_groups
-            SET created_at = CURRENT_TIMESTAMP
-            WHERE created_at IS NULL
-            """
-        )
-
-        self._ensure_column("folder_similarity_candidates", "created_at", "TEXT")
-        self.conn.execute(
-            """
-            UPDATE folder_similarity_candidates
-            SET created_at = CURRENT_TIMESTAMP
-            WHERE created_at IS NULL
-            """
-        )
-
         self._ensure_column("analysis_state", "updated_at", "TEXT")
         self.conn.execute(
             """
@@ -268,6 +219,7 @@ class SQLiteDB:
             CREATE INDEX IF NOT EXISTS idx_files_folder ON files(folder_id);
             CREATE INDEX IF NOT EXISTS idx_files_scan ON files(scan_run_id, is_missing);
             CREATE INDEX IF NOT EXISTS idx_files_size ON files(size);
+            CREATE INDEX IF NOT EXISTS idx_file_hashes_full ON file_hashes(full_hash);
             CREATE INDEX IF NOT EXISTS idx_folders_parent ON folders(parent_id);
             CREATE INDEX IF NOT EXISTS idx_folders_scan ON folders(scan_run_id, is_missing);
             """

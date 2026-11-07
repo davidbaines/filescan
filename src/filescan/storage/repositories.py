@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from filescan.models import DuplicateGroup, FileRecord, FolderRecord, FolderSimilarityCandidate
+from filescan.models import FileRecord, FolderRecord
 from filescan.storage.db import SQLiteDB
 from filescan.storage.sql import CLOUD_PLACEHOLDER_MASK, path_prefix
 
@@ -189,25 +189,6 @@ class FileRepository:
         ).fetchone()
         return None if row is None else dict(row)
 
-    def get_stage_scan_run_id(self, stage: str) -> int:
-        row = self.db.conn.execute("SELECT scan_run_id FROM analysis_state WHERE stage = ?", (stage,)).fetchone()
-        if row is None:
-            return 0
-        return int(row["scan_run_id"])
-
-    def set_stage_scan_run_id(self, stage: str, scan_run_id: int) -> None:
-        self.db.conn.execute(
-            """
-            INSERT INTO analysis_state (stage, scan_run_id, updated_at)
-            VALUES (?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(stage) DO UPDATE SET
-                scan_run_id = excluded.scan_run_id,
-                updated_at = CURRENT_TIMESTAMP
-            """,
-            (stage, scan_run_id),
-        )
-        self.db.conn.commit()
-
     def list_active_folders(self) -> list[FolderRecord]:
         return list(self.iter_active_folders())
 
@@ -244,67 +225,6 @@ class FileRepository:
         for row in rows:
             yield self._folder_from_row(row)
 
-    @staticmethod
-    def _hashed_only_clause(roots: list[Path]) -> tuple[str, list[str]]:
-        """SQL keeping files under `roots` only when they already have a full hash."""
-        if not roots:
-            return "", []
-        under = " OR ".join("(files.path = ? OR files.path LIKE ? ESCAPE '|')" for _ in roots)
-        params = [value for root in roots for value in path_prefix(root)]
-        return f" AND (NOT ({under}) OR file_hashes.full_hash IS NOT NULL)", params
-
-    def duplicate_size_groups(
-        self, *, min_size: int = 1, hashed_only_roots: list[Path] = ()
-    ) -> list[tuple[int, int, int]]:
-        """Return (size, file_count, unhashed) for every size shared by two or more active files.
-
-        `unhashed` counts the files with no hash at all, which are the ones the
-        next duplicates run must read. Cloud placeholders are left out. Files
-        under `hashed_only_roots` (the server) count only if they already have a
-        full hash, because filescan never reads server files itself.
-        """
-        outside, params = self._hashed_only_clause(list(hashed_only_roots))
-        rows = self.db.conn.execute(
-            f"""
-            SELECT files.size AS size, COUNT(*) AS file_count,
-                   SUM(file_hashes.quick_hash IS NULL AND file_hashes.full_hash IS NULL) AS unhashed
-            FROM files
-            JOIN folders ON folders.id = files.folder_id
-            LEFT JOIN file_hashes ON file_hashes.file_id = files.id
-            WHERE files.is_missing = 0
-              AND folders.is_missing = 0
-              AND files.size >= ?
-              AND (files.attributes & ?) = 0
-              {outside}
-            GROUP BY files.size
-            HAVING COUNT(*) > 1
-            ORDER BY files.size
-            """,
-            (min_size, CLOUD_PLACEHOLDER_MASK, *params),
-        )
-        return [(int(row["size"]), int(row["file_count"]), int(row["unhashed"] or 0)) for row in rows]
-
-    def files_of_size(self, size: int, *, hashed_only_roots: list[Path] = ()) -> list[FileRecord]:
-        outside, params = self._hashed_only_clause(list(hashed_only_roots))
-        rows = self.db.conn.execute(
-            f"""
-            SELECT files.id, files.folder_id, folders.path AS folder_path, files.filename, files.path, files.size,
-                   files.mtime, files.ctime, files.scan_run_id, files.is_missing, files.attributes,
-                   file_hashes.quick_hash, file_hashes.full_hash
-            FROM files
-            JOIN folders ON folders.id = files.folder_id
-            LEFT JOIN file_hashes ON file_hashes.file_id = files.id
-            WHERE files.size = ?
-              AND files.is_missing = 0
-              AND folders.is_missing = 0
-              AND (files.attributes & ?) = 0
-              {outside}
-            ORDER BY files.path
-            """,
-            (size, CLOUD_PLACEHOLDER_MASK, *params),
-        )
-        return [self._file_from_row(row) for row in rows]
-
     def files_without_full_hash(self, *, skip_roots: list[Path] = ()) -> list[FileRecord]:
         """Active files with no full hash, outside `skip_roots`. Cloud placeholders are left out."""
         skip = "".join(" AND NOT (files.path = ? OR files.path LIKE ? ESCAPE '|')" for _ in skip_roots)
@@ -329,20 +249,6 @@ class FileRepository:
 
     def list_active_files(self, *, min_size: int = 0) -> list[FileRecord]:
         return list(self.iter_active_files(min_size=min_size))
-
-    def count_active_files(self, *, min_size: int = 0) -> int:
-        row = self.db.conn.execute(
-            """
-            SELECT COUNT(*) AS count
-            FROM files
-            JOIN folders ON folders.id = files.folder_id
-            WHERE files.is_missing = 0
-              AND folders.is_missing = 0
-              AND files.size >= ?
-            """,
-            (min_size,),
-        ).fetchone()
-        return 0 if row is None else int(row["count"])
 
     def _file_from_row(self, row) -> FileRecord:
         return FileRecord(
@@ -396,160 +302,3 @@ class FileRepository:
         )
         if commit:
             self.db.conn.commit()
-
-    def replace_duplicate_groups(self, groups: list[DuplicateGroup]) -> None:
-        self.db.conn.execute("DELETE FROM duplicate_group_members")
-        self.db.conn.execute("DELETE FROM duplicate_groups")
-        for group in groups:
-            cursor = self.db.conn.execute(
-                """
-                INSERT INTO duplicate_groups (full_hash, size_bytes, file_count, total_bytes, created_at)
-                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-                """,
-                (group.full_hash, group.size_bytes, group.file_count, group.total_bytes),
-            )
-            group_id = int(cursor.lastrowid)
-            for file_record in group.files:
-                if file_record.id is None:
-                    raise ValueError("Duplicate groups require file ids.")
-                self.db.conn.execute(
-                    "INSERT INTO duplicate_group_members (group_id, file_id) VALUES (?, ?)",
-                    (group_id, file_record.id),
-                )
-        self.db.conn.commit()
-
-    def list_duplicate_groups(self) -> list[DuplicateGroup]:
-        return list(self.iter_duplicate_groups())
-
-    def count_duplicate_groups(self) -> int:
-        row = self.db.conn.execute("SELECT COUNT(*) AS count FROM duplicate_groups").fetchone()
-        return 0 if row is None else int(row["count"])
-
-    def iter_duplicate_groups(self):
-        rows = self.db.conn.execute(
-            """
-            SELECT dg.id AS group_id, dg.full_hash, dg.size_bytes,
-                   files.id AS file_id, files.folder_id, folders.path AS folder_path, files.filename, files.path,
-                   files.size, files.mtime, files.ctime, files.scan_run_id, files.is_missing,
-                   file_hashes.quick_hash, file_hashes.full_hash
-            FROM duplicate_groups dg
-            JOIN duplicate_group_members dgm ON dgm.group_id = dg.id
-            JOIN files ON files.id = dgm.file_id
-            JOIN folders ON folders.id = files.folder_id
-            LEFT JOIN file_hashes ON file_hashes.file_id = files.id
-            WHERE files.is_missing = 0
-            ORDER BY dg.id, files.path
-            """
-        )
-        current_group_id: int | None = None
-        current_full_hash = ""
-        current_size_bytes = 0
-        current_files: list[FileRecord] = []
-        for row in rows:
-            group_id = int(row["group_id"])
-            if current_group_id is None:
-                current_group_id = group_id
-                current_full_hash = str(row["full_hash"])
-                current_size_bytes = int(row["size_bytes"])
-            elif group_id != current_group_id:
-                yield DuplicateGroup(
-                    id=current_group_id,
-                    full_hash=current_full_hash,
-                    size_bytes=current_size_bytes,
-                    files=tuple(current_files),
-                )
-                current_group_id = group_id
-                current_full_hash = str(row["full_hash"])
-                current_size_bytes = int(row["size_bytes"])
-                current_files = []
-            current_files.append(
-                FileRecord(
-                    id=int(row["file_id"]),
-                    folder_id=int(row["folder_id"]),
-                    folder_path=Path(row["folder_path"]),
-                    path=Path(row["path"]),
-                    filename=str(row["filename"]),
-                    size=int(row["size"]),
-                    mtime=float(row["mtime"]),
-                    ctime=float(row["ctime"]),
-                    scan_run_id=int(row["scan_run_id"]),
-                    is_missing=bool(row["is_missing"]),
-                    quick_hash=row["quick_hash"],
-                    full_hash=row["full_hash"],
-                )
-            )
-        if current_group_id is not None:
-            yield DuplicateGroup(
-                id=current_group_id,
-                full_hash=current_full_hash,
-                size_bytes=current_size_bytes,
-                files=tuple(current_files),
-            )
-
-    def replace_similarity_candidates(self, candidates: list[FolderSimilarityCandidate]) -> None:
-        self.db.conn.execute("DELETE FROM folder_similarity_candidates")
-        for candidate in candidates:
-            if candidate.folder_a_id is None or candidate.folder_b_id is None:
-                candidate.folder_a_id = self.get_folder_id(candidate.folder_a)
-                candidate.folder_b_id = self.get_folder_id(candidate.folder_b)
-            self.db.conn.execute(
-                """
-                INSERT INTO folder_similarity_candidates (
-                    folder_a_id, folder_b_id, score, shared_duplicate_files, shared_signatures,
-                    name_bonus, size_ratio, file_count_ratio, reason, created_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                """,
-                (
-                    candidate.folder_a_id,
-                    candidate.folder_b_id,
-                    candidate.score,
-                    candidate.shared_duplicate_files,
-                    candidate.shared_signatures,
-                    candidate.name_bonus,
-                    candidate.size_ratio,
-                    candidate.file_count_ratio,
-                    candidate.reason,
-                ),
-            )
-        self.db.conn.commit()
-
-    def list_similarity_candidates(self) -> list[FolderSimilarityCandidate]:
-        rows = self.db.conn.execute(
-            """
-            SELECT c.id, c.folder_a_id, c.folder_b_id, c.score, c.shared_duplicate_files,
-                   c.shared_signatures, c.name_bonus, c.size_ratio, c.file_count_ratio, c.reason,
-                   fa.path AS folder_a_path, fb.path AS folder_b_path
-            FROM folder_similarity_candidates c
-            JOIN folders fa ON fa.id = c.folder_a_id
-            JOIN folders fb ON fb.id = c.folder_b_id
-            ORDER BY c.score DESC, folder_a_path, folder_b_path
-            """
-        ).fetchall()
-        return [
-            FolderSimilarityCandidate(
-                id=int(row["id"]),
-                folder_a_id=int(row["folder_a_id"]),
-                folder_b_id=int(row["folder_b_id"]),
-                folder_a=Path(row["folder_a_path"]),
-                folder_b=Path(row["folder_b_path"]),
-                score=float(row["score"]),
-                shared_duplicate_files=int(row["shared_duplicate_files"]),
-                shared_signatures=int(row["shared_signatures"]),
-                name_bonus=float(row["name_bonus"]),
-                size_ratio=float(row["size_ratio"]),
-                file_count_ratio=float(row["file_count_ratio"]),
-                reason=str(row["reason"]),
-            )
-            for row in rows
-        ]
-
-    def list_scan_stats(self) -> list[dict[str, int | str]]:
-        rows = self.db.conn.execute(
-            """
-            SELECT root_path, scan_run_id, total_folders, total_files, indexed_folders, indexed_files, last_scanned_at
-            FROM scan_stats
-            ORDER BY root_path
-            """
-        ).fetchall()
-        return [dict(row) for row in rows]

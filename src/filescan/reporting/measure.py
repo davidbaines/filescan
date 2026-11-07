@@ -1,9 +1,8 @@
 """Phase 4 checkpoint: how big is the organised set, and where does it fit?
 
-Counts distinct content, so each set of identical files is counted once:
-files with a full hash by that hash, files with only a quick hash by size and
-quick hash, and anything else as its own content. Unhashed files mostly have a
-size no other file shares, so they really are distinct.
+Counts distinct content, so each set of identical files is counted once by
+size and full hash. A file without a full hash counts as its own content; run
+`filescan hash-all` first so that every file has one.
 
 The organised set is everything outside the exclusions, plus content kept in
 a review (`filescan review`). It is measured three ways: as it stands, without
@@ -63,7 +62,7 @@ def measure(db: SQLiteDB, config: ScanConfig) -> Measure:
     total = db.conn.execute("SELECT COUNT(*) FROM files WHERE is_missing = 0").fetchone()[0]
     query = """
         SELECT f.id, f.folder_id, fo.path AS folder, f.path, f.size, f.attributes,
-               h.full_hash, h.quick_hash, u.disposition
+               h.full_hash, u.disposition
         FROM files f
         JOIN folders fo ON fo.id = f.folder_id
         LEFT JOIN file_hashes h ON h.file_id = f.id
@@ -87,12 +86,8 @@ def measure(db: SQLiteDB, config: ScanConfig) -> Measure:
                 result.placeholders += 1
                 continue
             size = int(r["size"])
-            if r["full_hash"]:
-                key: object = r["full_hash"]
-            elif r["quick_hash"]:
-                key = ("q", size, r["quick_hash"])
-            else:
-                key = int(r["id"])
+            # Only a full hash proves two files the same; a file without one counts as its own content.
+            key: object = (size, r["full_hash"]) if r["full_hash"] else int(r["id"])
             location = SERVER if str(r["path"]).startswith("\\\\") else PC
             level = _LEVEL.get(r["disposition"], NORMAL)
             entry = content.get(key)

@@ -9,6 +9,8 @@ the inventory; anything else is counted as stale and needs a fresh import.
 from __future__ import annotations
 
 import json
+import re
+import shlex
 import subprocess
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -36,8 +38,10 @@ def unc_to_posix(unc: Path, root: RootConfig) -> str | None:
 
 def ssh_hash_runner(config: ScanConfig) -> HashRunner:
     def run(root_config: RootConfig, posix_paths: list[str]) -> Iterable[dict]:
-        job = "hash-" + (root_config.path.name or str(root_config.path).strip("\\").replace("\\", "_"))
-        job_in, job_out = f"{WORK_DIR}/{job}.in.jsonl", f"{WORK_DIR}/{job}.out.jsonl"
+        name = root_config.path.name or str(root_config.path).strip("\\").replace("\\", "_")
+        job = "hash-" + re.sub(r"[^A-Za-z0-9._-]", "_", name)  # the job name goes into remote shell commands
+        job_in = shlex.quote(f"{WORK_DIR}/{job}.in.jsonl")
+        job_out = shlex.quote(f"{WORK_DIR}/{job}.out.jsonl")
         ssh = ["ssh", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=60", config.server_ssh]
         payload = "".join(json.dumps(p) + "\n" for p in posix_paths).encode("utf-8", "surrogateescape")
         subprocess.run(ssh + [f"mkdir -p {WORK_DIR} && cat > {job_in}"], input=payload, check=True)
@@ -107,10 +111,6 @@ class ServerHasher:
                     if summary.hashed % 500 == 0:
                         db.conn.commit()
                 db.conn.commit()
-            if summary.hashed:
-                # New server hashes can make more PC files comparable, so `status`
-                # compares this time with the last duplicates run.
-                repo.set_stage_scan_run_id("server-hashes", repo.latest_scan_run_id())
         finally:
             db.close()
         print(f"Server hashes stored: {summary.hashed:,}; stale: {summary.stale:,}; errors: {summary.errors:,}")

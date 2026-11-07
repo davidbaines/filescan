@@ -88,6 +88,27 @@ def is_link_path(path: str) -> bool:
         return True
 
 
+def real_location(path: str) -> str:
+    """Where a path really leads once every junction and link in it is followed, as a plain path."""
+    return short_path(os.path.realpath(long_path(short_path(path)))).rstrip("\\")
+
+
+def leads_elsewhere(path: str) -> bool:
+    """True if a junction or link anywhere in the path (not only at its end) takes it somewhere else.
+
+    An old profile on D: has junctions such as "Application Data" that lead into
+    the live profile on C:, so a path that looks like D:\\... can be on C:.
+    """
+    try:
+        return real_location(path).lower() != short_path(path).rstrip("\\").lower()
+    except OSError:
+        return True  # if we cannot tell, treat it as leading elsewhere
+
+
+class UnsafeTarget(RuntimeError):
+    """A permission change was asked for on C: or through a link. Everything stops; nothing is changed."""
+
+
 # ---------------------------------------------------------------- walking
 
 
@@ -157,6 +178,24 @@ def remove_file(path: str) -> None:
         os.remove(path)
 
 
+def remove_folder(path: str, fixer: "OwnershipFixer | None" = None) -> None:
+    """Remove an empty folder: clear its read-only attribute if needed, then fix its permissions if allowed."""
+    try:
+        os.rmdir(path)
+        return
+    except FileNotFoundError:
+        raise
+    except PermissionError:
+        os.chmod(path, stat.S_IWRITE)
+    try:
+        os.rmdir(path)
+    except PermissionError:
+        if fixer is None:
+            raise
+        fixer.folder(path)
+        os.rmdir(path)
+
+
 # ---------------------------------------------------------------- permissions
 
 
@@ -178,25 +217,40 @@ class OwnershipFixer:
         self.runs += 1
         subprocess.run(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
+    @staticmethod
+    def _guard(path: str) -> str:
+        """The plain path, after checking it is on no link and not on C:. Raises UnsafeTarget otherwise.
+
+        Checked again immediately before every takeown and icacls, whatever the
+        caller checked earlier: on 6 November a recursive permission reset went
+        through old-profile junctions into C:.
+        """
+        plain = short_path(path).rstrip("\\")
+        if leads_elsewhere(plain):
+            raise UnsafeTarget(f"{plain} leads through a junction or link to {real_location(plain)}")
+        if plain[:2].upper() == "C:" or real_location(plain)[:2].upper() == "C:":
+            raise UnsafeTarget(f"{plain} is on C:, where permissions are never changed")
+        return plain
+
     def folder(self, folder: str) -> bool:
         """Fix one folder (checked not to be a link) so it can be listed. False if already tried."""
-        key = folder.lower()
+        plain = self._guard(folder)
+        key = plain.lower()
         if key in self.fixed:
             return False
         self.fixed.add(key)
-        plain = short_path(folder)
         self._run(["takeown", "/f", plain])
         self._run(["icacls", plain, "/reset", "/c", "/q"])
         return True
 
     def children(self, folder: str) -> None:
         """Fix the items directly in a folder, not below. Only call it when none of them is a link."""
-        pattern = short_path(folder) + "\\*"
+        pattern = self._guard(folder) + "\\*"
         self._run(["takeown", "/f", pattern])
         self._run(["icacls", pattern, "/reset", "/c", "/q"])
 
     def file(self, path: str) -> None:
-        plain = short_path(path)
+        plain = self._guard(path)
         self._run(["takeown", "/f", plain])
         self._run(["icacls", plain, "/reset", "/c", "/q"])
 
@@ -244,6 +298,9 @@ def check_folder(path: str, config: ScanConfig) -> str:
             return f"it overlaps the pinned folder {pinned}"
     if os.path.lexists(long_path(path)) and is_link_path(long_path(path)):
         return "it is itself a junction or link; delete the link in Explorer instead"
+    if leads_elsewhere(path):
+        return (f"a folder above it is a junction or link, so it is really {real_location(path)}; "
+                "nothing is deleted through a link")
     return ""
 
 
@@ -387,15 +444,14 @@ def delete_tree(top: str, log: _Log, fixer: OwnershipFixer | None = None) -> Cou
                     remove_link(item.path)
                     counts["links"] += 1
                 elif item.kind == "dir":
-                    os.rmdir(item.path)
+                    remove_folder(item.path, fixer)
                     counts["folders"] += 1
                 else:
                     counts["unreadable"] += 1
                     log.write({"kind": "error", "path": short_path(item.path), "error": item.error})
             except OSError as exc:
                 counts["errors" if item.kind != "dir" else "folders left"] += 1
-                if item.kind != "dir":  # a folder left behind is explained by the error inside it
-                    log.write({"kind": "error", "path": short_path(item.path), "error": str(exc)})
+                log.write({"kind": "error", "path": short_path(item.path), "error": str(exc)})
     return counts
 
 
@@ -437,7 +493,7 @@ def run_delete_folder(config: ScanConfig, folders: list[str], *, yes: bool = Fal
             return reports
         fixer = None
         if take_ownership:
-            if any(r.path[:2].upper() == "C:" for r in allowed):
+            if any(r.path[:2].upper() == "C:" or real_location(r.path)[:2].upper() == "C:" for r in allowed):
                 raise SystemExit("--take-ownership is never used on C:. Nothing was deleted.")
             if not is_elevated():
                 raise SystemExit("--take-ownership needs an elevated terminal (Run as administrator). "

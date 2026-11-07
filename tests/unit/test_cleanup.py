@@ -162,7 +162,7 @@ def test_quarantine_restore_and_purge(tmp_path):
     assert purge(config, folder, now=later)["would_purge"] == 4   # without --yes nothing is deleted
     assert (qroot / "Trash" / "old" / "a.txt").exists()
     counts = purge(config, folder, yes=True, now=later)
-    assert counts["purged"] == 4 and counts["its copy is no longer there"] == 1
+    assert counts["purged"] == 4 and counts["its copy is gone or has changed"] == 1
     assert not (qroot / "Trash" / "old" / "a.txt").exists()
     assert (qroot / "Trash" / "old" / "dup.txt").exists()   # held: its copy is gone
     assert last_states(folder)[str(pc / "Trash" / "old" / "a.txt")]["status"] == "purged"
@@ -225,3 +225,37 @@ def test_reason_filter_and_volume_folders(tmp_path):
     assert quarantine(config, folder, dry_run=True, reason="review:server-trash") == Counter(would_move=5)
     assert quarantine(config, folder, reason="rule:build-output") == Counter(moved=1)
     assert (pc / "Trash" / "old" / "a.txt").exists()
+
+
+def test_a_failed_restore_leaves_the_file_restorable_and_purgeable(tmp_path):
+    from filescan.cleanup.quarantine import in_quarantine
+
+    config, pc, folder = _planned(tmp_path)
+    assert quarantine(config, folder)["moved"] == 6
+    original = pc / "Trash" / "old" / "a.txt"
+    original.write_bytes(b"a new file in the way")       # restore will meet a conflict
+    first = restore(config, folder)
+    assert first["conflict"] == 1
+    assert str(original) in in_quarantine(folder)        # still in quarantine, still known to be
+    original.unlink()
+    assert restore(config, folder)["moved"] == 1          # a second restore can finish the job
+    assert original.read_bytes() == b"unique A"
+
+
+def test_purge_keeps_a_file_whose_copy_changed_but_kept_its_size(tmp_path):
+    config, pc, folder = _planned(tmp_path)
+    assert quarantine(config, folder)["moved"] == 6
+    copy = pc / "Docs" / "dup.txt"
+    copy.write_bytes(b"KEPT ELSEWHERE")                   # same length, different content and date
+    later = datetime.now() + timedelta(days=15)
+    counts = purge(config, folder, yes=True, now=later)
+    assert counts["its copy is gone or has changed"] == 1
+
+
+def _planned(tmp_path: Path):
+    config, db, pc = _setup(tmp_path)
+    try:
+        plan = build_plan(db, config, plan_id="p1")
+    finally:
+        db.close()
+    return config, pc, write_plan(plan, config.filescan_folder / "cleanup")
