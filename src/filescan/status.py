@@ -119,10 +119,10 @@ def _roots(status: Status, db: SQLiteDB, config: ScanConfig) -> None:
         status.add(f"{str(rc.path):<{width}}  scanned {_when(row['last_scanned_at'] if row else None)}  {files}  "
                    f"{drive}{label}")
         if row is None:
-            status.todo.append(f"{'scan' if rc.location == 'pc' else 'import-server'}: {rc.path} has never "
+            status.todo.append(f"scan: {rc.path} has never "
                                "been scanned.")
         elif datetime.fromisoformat(row["last_scanned_at"]) < cutoff and rc.role != "master":
-            status.todo.append(f"{'scan' if rc.location == 'pc' else 'import-server'}: {rc.path} was last "
+            status.todo.append(f"scan: {rc.path} was last "
                                f"scanned more than {config.scan_max_age.days} days ago.")
     _hashes(status, db)
 
@@ -137,8 +137,8 @@ def _hashes(status: Status, db: SQLiteDB) -> None:
               AND (f.attributes & {CLOUD_PLACEHOLDER_MASK}) = 0""").fetchone()
     if row["n"]:
         status.add(f"hashes: {row['n']:,} files ({row['bytes'] / 1e9:,.1f} GB) have no full hash")
-        status.todo.append("hash-all: give the remaining files a full hash (it reads only what is missing; files "
-                           "it cannot read are listed in its log).")
+        status.todo.append("scan: give the remaining files a full hash (hashing reads only what is missing; "
+                           "files it cannot read are listed in the logs folder).")
     else:
         status.add("hashes: every file has a full hash")
 

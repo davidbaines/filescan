@@ -22,7 +22,8 @@ def test_every_command_the_readme_names_exists_or_is_planned():
 
 def test_the_readme_describes_every_command_in_the_order_of_the_help():
     text = README.read_text(encoding="utf-8")
-    order = [name for _, items in COMMAND_GROUPS for name, _ in items if name != "status"]
+    # The last group holds the single steps of scan, which the README leaves out.
+    order = [name for _, items in COMMAND_GROUPS[:-1] for name, _ in items if name != "status"]
     positions = [text.find(f"| `filescan {name}") for name in order]
     assert all(p >= 0 for p in positions), [n for n, p in zip(order, positions) if p < 0]
     assert positions == sorted(positions), "README.md lists the commands in a different order from the help"

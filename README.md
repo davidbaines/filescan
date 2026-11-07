@@ -26,10 +26,11 @@ Each command says whether it only reads, writes reports, or changes files. Comma
 
 | Command | What it does | Changes files? |
 |---|---|---|
-| `filescan drives` | Checks that each PC root is on the drive it should be, by volume serial number. A drive on the wrong letter is skipped by the scan and the cleanup, so its files are never marked missing. | No |
-| `filescan scan` | Walks the PC roots and records every folder and file (size and dates) in the database. A second run updates only what changed; `--rescan` walks everything again. A file whose size or date has changed loses its hash. | No |
-| `filescan import-server` | Lists the server roots with `fsagent list` over SSH and records the server files the same way. | No |
-| `filescan hash-all` | Gives every file a full content hash. PC files are read here, two at a time per drive; server files are hashed on the server. It reads only files without a hash, so it is safe to stop and run again, and to run after every scan. Files it cannot read are listed in the `logs` folder. | No |
+| `filescan scan` | Records every file on the PC and the server, and gives each one a content hash. It checks each PC drive is the right one, walks the PC roots, lists the server roots over SSH, then hashes every file that has no hash yet: PC files here, two at a time per drive, and server files on the server. | No |
+
+Run `scan` again whenever files have changed: it reads only what is new or changed, and a file whose size or date has changed gets a new hash. It is safe to stop and run again. If one part fails, for example because the server is off, the rest still runs and the summary says what to run again. Files that cannot be read are listed in the `logs` folder.
+
+To scan only some places, comment out the other roots in `config.yml`. `--rescan` walks every PC folder again, rather than only the changed ones.
 
 Every later step compares files by these hashes. Two files count as the same only when their hashes match.
 

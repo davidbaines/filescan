@@ -10,6 +10,7 @@ from filescan.cleanup.unwanted import run_unwanted_report
 from filescan.compare import run_compare
 from filescan.config import ConfigNotSet, load_config, resolve_config_path
 from filescan.dedupe.hash_all import run_hash_all
+from filescan.inventory.full_scan import run_full_scan
 from filescan.inventory.preflight import check_db_space, check_stale_roots
 from filescan.inventory.scanner import run_scan
 from filescan.inventory.server_import import run_import_server
@@ -26,12 +27,9 @@ from filescan.storage.db import validate_database_ready
 COMMAND_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
     ("Start here", [
         ("status", "Show where the work stands and what to run next. Reads only."),
-        ("drives", "Show each PC root's drive, its volume serial number and whether the right drive is connected."),
     ]),
-    ("1. Inventory: record and hash every file", [
-        ("scan", "Walk the PC roots and record every folder and file (size, dates) in the database."),
-        ("import-server", "List the server roots with fsagent over SSH and load them into the database."),
-        ("hash-all", "Give every file a full hash, PC and server (resumable; reads only what is missing)."),
+    ("1. Inventory", [
+        ("scan", "Record and hash every file, PC and server: drives, scan-pc, import-server and hash-all in turn."),
     ]),
     ("2. Find what can go", [
         ("exclusions-report", "List the folders each exclusion rule leaves out of the organised set, with sizes (CSV)."),
@@ -49,6 +47,12 @@ COMMAND_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
     ]),
     ("4. Build the master on disk2", [
         ("build-plan", "Decide where each kept file goes in the organised layout (layout.yml). Copies nothing."),
+    ]),
+    ("The steps of scan, on their own (only when one step is needed)", [
+        ("drives", "Show each PC root's drive, its volume serial number and whether the right drive is connected."),
+        ("scan-pc", "Walk the PC roots and record every folder and file (size, dates) in the database."),
+        ("import-server", "List the server roots with fsagent over SSH and load them into the database."),
+        ("hash-all", "Give every file a full hash, PC and server (resumable; reads only what is missing)."),
     ]),
 ]
 
@@ -71,8 +75,8 @@ Run "filescan <command> -h" for a command's options. README.md explains each ste
 
 HELP: dict[str, str] = {name: text for _, items in COMMAND_GROUPS for name, text in items}
 
-# Commands that read no hashes, so they run before or without a full inventory.
-_NO_STALE_CHECK = ("scan", "import-server", "status", "drives")
+# Commands that make or check the inventory, so a warning about an old scan is beside the point.
+_NO_STALE_CHECK = ("scan", "scan-pc", "import-server", "hash-all", "status", "drives")
 
 
 def _commands_text() -> str:
@@ -103,11 +107,12 @@ def build_parser() -> argparse.ArgumentParser:
                  "measure", "compare", "build-plan"):
         add(name)
 
-    scan = add("scan")
-    scan.add_argument("--rescan", action="store_true", help="Re-scan roots even if they were already scanned.")
-    scan.add_argument("--delta", action="store_true",
-                      help="Fast update: skip folders whose mtime is unchanged since last scan. Misses files edited "
-                      "in place; use --rescan before comparing or hashing.")
+    for name in ("scan", "scan-pc"):
+        scan = add(name)
+        scan.add_argument("--rescan", action="store_true", help="Walk the PC roots again even if already scanned.")
+        scan.add_argument("--delta", action="store_true",
+                          help="Fast update: skip PC folders whose date is unchanged since the last scan. Misses "
+                          "files edited in place.")
 
     review = add("review")
     review.add_argument("scope", nargs="?", default=None, help="Name of a delete-candidate exclusion rule.")
@@ -179,6 +184,9 @@ def main(argv: list[str] | None = None) -> int:
     elif command == "drives":
         run_drives(config)
     elif command == "scan":
+        failed = run_full_scan(args.config, rescan=args.rescan, delta=args.delta)
+        return 1 if failed else 0
+    elif command == "scan-pc":
         check_db_space(config)
         run_scan(args.config, rescan=args.rescan, delta=args.delta)
     elif command == "import-server":

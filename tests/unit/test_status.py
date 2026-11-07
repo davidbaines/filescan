@@ -83,7 +83,7 @@ def test_status_lists_what_to_do(tmp_path):
         {"path": "a", "op": "quarantine", "status": "moved", "at": "2026-11-01T10:00:00"}) + "\n", encoding="utf-8")
     status = gather(config, now=datetime(2026, 11, 20))
     todo = "\n".join(status.todo)
-    assert "hash-all" in todo
+    assert "full hash" in todo
     assert "review server-trash: 1 folder undecided" in todo
     assert "review corpora: not started" in todo
     assert "cleanup-purge" in todo
@@ -107,11 +107,11 @@ def test_status_counts_files_without_a_hash_until_hash_all_has_run(tmp_path):
     config = load_config(config_path)
     status = gather(config)
     assert "hashes: 2 files (0.0 GB) have no full hash" in "\n".join(status.lines)
-    assert any(item.startswith("hash-all:") for item in status.todo)
+    assert any(item.startswith("scan: give") for item in status.todo)
     run_hash_all(config_path)
     status = gather(config)
     assert "hashes: every file has a full hash" in "\n".join(status.lines)
-    assert not any(item.startswith("hash-all:") for item in status.todo)
+    assert not any(item.startswith("scan: give") for item in status.todo)
 
 
 def test_status_counts_only_layout_entries_marked_as_guesses(tmp_path):

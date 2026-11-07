@@ -21,10 +21,9 @@ poetry install                                   # install dependencies
 # repository root (copy .env.example). There is no built-in default. With no command,
 # filescan prints the help, grouped by stage.
 filescan status                                  # where the work stands and what to run next (reads only)
-filescan drives                                  # check each PC root is on the right drive (volume serial)
-filescan scan [--rescan]                         # record every PC folder and file
-filescan import-server                           # list server roots with fsagent over SSH
-filescan hash-all                                # a full hash for every file, PC and server; reads only what is missing
+filescan scan [--rescan]                         # the whole inventory: drives, scan-pc, import-server, hash-all in turn
+#   the single steps, for when only one is needed (not in README.md):
+#   filescan drives | scan-pc | import-server | hash-all
 filescan exclusions-report                       # CSV of what each exclusion rule leaves out
 filescan unwanted-report                         # unwanted-data rules, reported by folder
 filescan review server-trash                     # keep or trash, folder by folder, for one exclusion
@@ -54,7 +53,8 @@ The live configuration and database are in `C:\filescan` (`config.yml`, `file_in
 
 | Stage | Module | Key class |
 |-------|--------|-----------|
-| Scan | `inventory/scanner.py` | `InventoryScanner`: multi-threaded walk of the PC roots, writes `folders`/`files` |
+| Inventory | `inventory/full_scan.py` | `run_full_scan`: the steps of `scan` in turn; a failed step is reported and the rest still run |
+| Scan the PC | `inventory/scanner.py` | `InventoryScanner`: multi-threaded walk of the PC roots, writes `folders`/`files` |
 | Server import | `inventory/server_import.py` | `ServerImporter`: runs `fsagent list` over SSH and stores server files under UNC paths |
 | Hash | `dedupe/hash_all.py`, `inventory/server_hash.py` | A full hash for every file: PC files here, two per drive; server files by `fsagent hash` |
 | Exclusions and unwanted data | `exclusion_index.py`, `reporting/exclusions.py`, `cleanup/unwanted.py` | Rules from `config.yml` and `cleanup/unwanted_rules.yml`, applied by folder |
