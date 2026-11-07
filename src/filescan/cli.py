@@ -24,6 +24,7 @@ from filescan.planning.proposals import build_plan_artifact
 from filescan.reporting.exclusions import run_exclusions_report
 from filescan.reporting.largest_files import (_fmt_size, find_large_files,
                                               run_largest)
+from filescan.planning.build_plan import run_build_plan
 from filescan.reporting.measure import run_measure
 from filescan.reporting.xlsx import write_report
 from filescan.review.app import run_review
@@ -66,6 +67,9 @@ COMMAND_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("cleanup-restore", "Put quarantined files from a plan back where they were."),
         ("cleanup-purge", "Delete a plan's quarantined files for good, after a waiting period. Needs --yes."),
     ]),
+    ("4. Build the master on disk2", [
+        ("build-plan", "Decide where each kept file goes in the organised layout (layout.yml). Copies nothing."),
+    ]),
     ("Older merge workflow and debugging (not part of the steps above)", [
         ("run", "Run scan, duplicates, similarity, plan and report in sequence."),
         ("similarity", "Find pairs of folders with similar contents (candidates for merging)."),
@@ -80,8 +84,8 @@ COMMAND_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
 ]
 
 PLANNED_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
-    ("4. Build the master on disk2 (planned, not built yet)", [
-        ("build-plan", "Decide where each kept file goes in the organised layout (layout.yml)."),
+    ("4. Build the master on disk2, continued (planned, not built yet)", [
+        ("copy-master", "Run a build plan's copies to disk2, verified by hash, keeping each file's date."),
         ("verify-coverage", "Prove every kept file is in the master, by hash."),
     ]),
     ("5. Organise the PC and mirror it (planned, not built yet)", [
@@ -150,7 +154,7 @@ def build_parser() -> argparse.ArgumentParser:
     execute_parser.add_argument("--plan", type=Path, required=True, help="The approved plan file.")
 
     for name in ("report", "waste", "largest", "import-server", "compare", "hash-server", "unwanted-report",
-                 "measure", "drives", "exclusions-report"):
+                 "measure", "drives", "exclusions-report", "build-plan"):
         add(name)
     review_parser = add("review")
     review_parser.add_argument("scope", nargs="?", default=None, help="Name of a delete-candidate exclusion rule.")
@@ -349,6 +353,9 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "review":
         _stage_start("review")
         run_review(args.config, args.scope, split_gb=args.split_gb)
+    elif args.command == "build-plan":
+        _stage_start("build-plan")
+        run_build_plan(args.config)
     elif args.command == "cleanup-plan":
         _stage_start("cleanup-plan")
         run_cleanup_plan(args.config, only=args.only, include_rules=not args.no_rules)

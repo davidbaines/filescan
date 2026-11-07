@@ -243,10 +243,20 @@ def _layout(status: Status, config: ScanConfig) -> None:
     open_items = sum(1 for line in layout.read_text(encoding="utf-8").splitlines()
                      if "# ?" in line and not line.lstrip().startswith("#"))
     status.add(f"{layout}: {open_items} entries marked '# ?' still need a decision")
-    status.add("build-plan, verify-coverage and pc-plan are not built yet")
     if open_items:
         status.todo.append(f"layout.yml: settle the {open_items} entries marked '# ?'.")
-    status.todo.append("build-plan: not built yet; it comes after the cleanup and layout.yml.")
+    builds = sorted((config.filescan_folder / "build").glob("*/plan.json"))
+    if not builds:
+        status.add("build-plan: no plan yet")
+        status.todo.append("build-plan: decide where each kept file goes (copies nothing).")
+    else:
+        meta = json.loads(builds[-1].read_text(encoding="utf-8"))
+        status.add(f"build-plan {meta['plan_id']}: {meta['items']:,} files, {meta['bytes'] / 1e9:,.1f} GB; "
+                   f"Unsorted {meta['unsorted_bytes'] / 1e9:,.1f} GB; {meta['unhashed']:,} kept files without a hash")
+        if layout.stat().st_mtime > builds[-1].stat().st_mtime:
+            status.todo.append("build-plan: layout.yml has changed since the last plan; run it again.")
+        status.todo.append(f"Review the build plan in {builds[-1].parent} (summary.csv, unsorted.csv, renamed.csv).")
+    status.add("copy-master, verify-coverage and pc-plan are not built yet")
 
 
 def gather(config: ScanConfig, *, config_path: Path | None = None, config_source: str = "",

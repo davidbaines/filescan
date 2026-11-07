@@ -46,6 +46,7 @@ filescan --config config.yml cleanup-plan        # files marked trash or matched
 filescan --config config.yml cleanup --plan DIR  # move a reviewed plan's files to quarantine (reversible)
 filescan --config config.yml cleanup-restore --plan DIR
 filescan --config config.yml cleanup-purge --plan DIR --yes  # delete quarantined files after 14 days
+filescan --config config.yml build-plan          # where each kept file goes in the layout (layout.yml); copies nothing
 
 poetry run pytest tests                          # run all tests
 poetry run pytest tests/unit/test_config.py      # one file
@@ -72,6 +73,7 @@ The live configuration and database are in `C:\filescan` (`config.yml`, `file_in
 | Report | `reporting/xlsx.py` | Custom XLSX writer (raw ZIP and XML, no external library) |
 | Execute | `execution/mover.py` | `ExecutionRunner`: copies trees, verifies by hash before writing |
 | Waste | `cleanup/waste_detector.py` | Pattern-based detection of junk and cache folders |
+| Build plan | `planning/layout.py`, `planning/build_plan.py` | `load_layout` reads and checks `layout.yml`; `build` keeps one copy of each content in layout order, keeps Git repositories whole and writes the manifest |
 | Cleanup | `cleanup/plan.py`, `cleanup/quarantine.py` | Plan from review decisions and rules; quarantine on the same disk, restore, purge. Server files move through `fsagent move` and `fsagent remove` |
 
 **Data layer:** `storage/db.py` (`SQLiteDB`, WAL mode) and `storage/repositories.py` (`FileRepository`). The database is the single source of truth for restartability: stages check what has already been processed and skip it unless `--rescan` is given.
