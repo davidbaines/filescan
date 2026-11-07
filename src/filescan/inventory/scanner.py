@@ -231,7 +231,9 @@ class InventoryScanner:
             if scan_run_id is None:
                 scan_run_id = repo.begin_scan_run()
             normalized_root = normalize_path(root)
-            if self.delta:
+            # A quick update needs an earlier scan to compare with; a new root is walked in full.
+            root_delta = self.delta and existing_stats is not None
+            if root_delta:
                 db_count = repo.count_active_folders()
                 print(f"Delta scan of {root} (up to {db_count:,} folders to check)...")
                 folder_count = None
@@ -253,7 +255,7 @@ class InventoryScanner:
                         futures = {
                             pool.submit(
                                 self._scan_folder, folder, root, depth,
-                                folder_scan_times.get(folder) if self.delta else None,
+                                folder_scan_times.get(folder) if root_delta else None,
                             ): (folder, depth)
                             for folder, depth in queue
                         }
@@ -292,8 +294,8 @@ class InventoryScanner:
                             queue.extend((subdir, depth + 1) for subdir in new_subdirs)
                             total_folders += len(new_subdirs)
                             bar.update(1)
-            if self.delta:
-                print(f"  {indexed_folders} folders rescanned, {skipped_folders} unchanged")
+            if root_delta:
+                print(f"  {indexed_folders:,} folders read again, {skipped_folders:,} unchanged")
             repo.mark_missing_under_root(root, scan_run_id)
             repo.upsert_scan_stats(
                 root=root,

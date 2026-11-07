@@ -21,7 +21,7 @@ poetry install                                   # install dependencies
 # repository root (copy .env.example). There is no built-in default. With no command,
 # filescan prints the help, grouped by stage.
 filescan status                                  # where the work stands and what to run next (reads only)
-filescan scan [--rescan]                         # the whole inventory (drives, scan-pc, import-server, hash-all), then report
+filescan scan [--rescan]                         # the whole inventory, then report; repeat scans read only changed folders unless --rescan
 #   the single steps, for when only one is needed (not in README.md):
 #   filescan drives | scan-pc | import-server | hash-all
 filescan report                                  # the reports again without scanning: one workbook plus CSVs

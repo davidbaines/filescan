@@ -8,7 +8,7 @@ The work follows [PLAN.md](PLAN.md). Project rules for coding agents are in [AGE
 
 To install filescan on the PC and run it from there:
 
-1. Install Python 3.12 or later. filescan does not install on earlier versions.
+1. Install Python 3.12 or later.
 2. Install Poetry. Version 1.7.1 was used during development; other versions should work.
 3. Clone the repository, change to its folder and install the dependencies:
 
@@ -38,9 +38,9 @@ Each command says whether it only reads, writes reports, or changes files. Comma
 | `filescan scan` | Records every file on the PC and the server, and gives each one a content hash. It checks each PC drive is the right one, walks the PC roots, lists the server roots over SSH, then hashes every file that has no hash yet: PC files here, two at a time per drive, and server files on the server. When it finishes, it writes the reports and lists what it wrote. | No |
 | `filescan report` | Writes the reports again without scanning, for example after changing the unwanted-data rules. | No |
 
-Run `scan` again whenever files have changed: it reads only what is new or changed, and a file whose size or date has changed gets a new hash. It is safe to stop and run again. If one part fails, for example because the server is off, the rest still runs, and the summary and the workbook say which part failed. Files that cannot be read are listed in the `logs` folder.
+Run `scan` again whenever files have changed. On a PC root scanned before, it reads only the folders whose date has changed since the last scan, which picks up new, deleted and renamed files quickly. A file edited in place doesn't change its folder's date, so that edit is missed; `filescan scan --rescan` reads every folder and catches it, and takes about 50 minutes for all the PC drives. The server is listed in full each time, which takes a few minutes. Hashing then reads only files that are new or whose size or date has changed.
 
-To scan only some places, comment out the other roots in `config.yml`. `--rescan` walks every PC folder again, rather than only the changed ones.
+It is safe to stop `scan` and run it again. If one part fails, for example because the server is off, the rest still runs, and the summary and the workbook say which part failed. Files that cannot be read are listed in the `logs` folder. To scan only some places, comment out the other roots in `config.yml`.
 
 Every later step compares files by these hashes. Two files count as the same only when their hashes match.
 

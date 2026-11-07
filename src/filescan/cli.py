@@ -102,10 +102,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     for name in ("scan", "scan-pc"):
         scan = add(name)
-        scan.add_argument("--rescan", action="store_true", help="Walk the PC roots again even if already scanned.")
-        scan.add_argument("--delta", action="store_true",
-                          help="Fast update: skip PC folders whose date is unchanged since the last scan. Misses "
-                          "files edited in place.")
+        scan.add_argument("--rescan", action="store_true",
+                          help="Read every PC folder again. Without it, a root scanned before is updated quickly: "
+                          "only folders whose date has changed are read, which misses files edited in place.")
 
     review = add("review")
     review.add_argument("scope", nargs="?", default=None, help="Name of a delete-candidate exclusion rule.")
@@ -177,11 +176,11 @@ def main(argv: list[str] | None = None) -> int:
     elif command == "drives":
         run_drives(config)
     elif command == "scan":
-        failed = run_full_scan(args.config, rescan=args.rescan, delta=args.delta)
+        failed = run_full_scan(args.config, rescan=args.rescan, delta=not args.rescan)
         return 1 if failed else 0
     elif command == "scan-pc":
         check_db_space(config)
-        run_scan(args.config, rescan=args.rescan, delta=args.delta)
+        run_scan(args.config, rescan=args.rescan, delta=not args.rescan)
     elif command == "import-server":
         run_import_server(args.config)
     elif command == "hash-all":
