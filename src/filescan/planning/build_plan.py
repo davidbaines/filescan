@@ -15,11 +15,13 @@ other location is listed in dropped.csv. Files without a full hash are each
 treated as distinct content and listed in unhashed.csv: they are kept, but
 verify-coverage needs a hash for each before anything is deleted.
 
-Git repositories are kept whole and stay out of the deduplication in both
-directions: their files are never dropped, and no other file is dropped
-because a repository holds the same content. Two repositories that land on the
-same destination are kept once if their files are identical; otherwise the
-later one is renamed.
+Git repositories, and each subfolder of a keep_whole folder in layout.yml, are
+kept whole and stay out of the deduplication in both directions: their files
+are never dropped, and no other file is dropped because they hold the same
+content. Two such units that land on the same destination are kept once if
+their files are identical; otherwise the later one is renamed. Unwanted-data
+matches are kept inside Git repositories (build output belongs to the
+repository) but left out of keep_whole folders like anywhere else.
 
 Name clashes (different content wanting the same destination, compared without
 regard to case, as Windows does) are resolved in layout order: the first keeps
@@ -72,7 +74,7 @@ class Candidate:
     order: int  # layout entry order, UNMAPPED_ORDER when unmapped
     dest: str  # wanted destination, relative, "/" separators
     label: str  # for renaming on a clash
-    repo: str = ""  # outermost Git repository containing the file (lower case), or ""
+    repo: str = ""  # outermost Git repository or keep_whole unit containing the file (lower case), or ""
 
 
 @dataclass(slots=True)
@@ -141,8 +143,9 @@ class _FolderInfo:
     order: int = 0
     dest_dir: str = ""
     label: str = ""
-    repo: str = ""
+    repo: str = ""  # the unit kept whole: a Git repository or a keep_whole subfolder
     location: str = "pc"
+    git: bool = False  # the unit is a Git repository
 
 
 def _classify_folder(folder: str, folder_id: int, *, layout: Layout, roots: list[RootConfig],
@@ -172,7 +175,10 @@ def _classify_folder(folder: str, folder_id: int, *, layout: Layout, roots: list
         order, lab = UNMAPPED_ORDER, origin(folder)
     else:
         order, lab = entry.order, label(entry.source)
-    return _FolderInfo("", order, dest_dir, lab, _repo_of(low, repos), root.location)
+    git_repo, whole = _repo_of(low, repos), layout.whole_unit(folder)
+    # The outer of the two is the unit, so a repository inside a keep_whole subfolder stays part of it.
+    unit = min((u for u in (git_repo, whole) if u), key=len, default="")
+    return _FolderInfo("", order, dest_dir, lab, unit, root.location, git=bool(unit) and unit == git_repo)
 
 
 def collect_candidates(db: SQLiteDB, config: ScanConfig, layout: Layout, plan: BuildPlan) -> list[Candidate]:
@@ -210,7 +216,7 @@ def collect_candidates(db: SQLiteDB, config: ScanConfig, layout: Layout, plan: B
             reason = info.skip
             if not reason and int(r["attributes"]) & CLOUD_PLACEHOLDER_MASK:
                 reason = "cloud placeholder"
-            if not reason and r["disposition"] == "delete-candidate" and not info.repo:
+            if not reason and r["disposition"] == "delete-candidate" and not info.git:
                 reason = "unwanted-data rule (delete-candidate)"
             if reason:
                 plan.left_out[reason] += 1
@@ -338,7 +344,7 @@ def place(candidates: list[Candidate], plan: BuildPlan) -> None:
                 {(c.dest.lower(), c.size, c.full_hash) for c in files} == first_set
             if same:
                 for c in files:
-                    plan.dropped.append((c, "identical repository", first_dest))
+                    plan.dropped.append((c, "identical folder kept whole", first_dest))
             else:
                 units.append((_rank(files[0]), "repo", (repo_dest, files)))
     units.sort(key=lambda u: u[0])

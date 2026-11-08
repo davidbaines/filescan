@@ -128,7 +128,7 @@ def test_two_repositories_at_one_destination_kept_once_if_identical_else_renamed
         _c(2, r"E:\GitHub\tool\a.py", "GitHub/tool/a.py", order=1, full_hash="a", repo=r"e:\github\tool", lab="E-GitHub"),
     ]
     plan, items = _placed(same)
-    assert list(items) == ["GitHub/tool/a.py"] and plan.dropped[0][1] == "identical repository"
+    assert list(items) == ["GitHub/tool/a.py"] and plan.dropped[0][1] == "identical folder kept whole"
     differ = [same[0], _c(2, r"E:\GitHub\tool\a.py", "GitHub/tool/a.py", order=1, full_hash="b",
                           repo=r"e:\github\tool", lab="E-GitHub")]
     plan, items = _placed(differ)
@@ -279,3 +279,35 @@ def test_build_plan_adds_its_sheets_to_the_workbook(tmp_path):
     with zipfile.ZipFile(load_config(config_path).report_path) as z:
         names = re.findall(r'<sheet name="([^"]+)"', z.read("xl/workbook.xml").decode())
     assert names == ["Contents", "Build summary", "Unsorted", "Renamed", "Long paths"]
+
+
+def test_keep_whole_makes_each_subfolder_a_unit_but_loose_files_are_kept_once(tmp_path):
+    layout = load_layout(_layout(tmp_path, (
+        "root_categories: [Downloads]\nmap:\n  E:\\Downloads: Downloads/E\n  F:\\Downloads: Downloads/F\n"
+        "keep_whole:\n  - E:\\Downloads\n  - F:\\Downloads\n")))
+    assert layout.whole_unit(r"E:\Downloads\sdk\bin") == r"e:\downloads\sdk"
+    assert layout.whole_unit(r"E:\Downloads") == ""                 # loose files in the folder itself
+    plan, items = _placed([
+        _c(1, r"E:\Downloads\sdk\lib\a.dll", "Downloads/E/sdk/lib/a.dll", order=0, full_hash="h",
+           repo=r"e:\downloads\sdk", lab="E-Downloads"),
+        _c(2, r"F:\Downloads\sdk\lib\a.dll", "Downloads/F/sdk/lib/a.dll", order=1, full_hash="h",
+           repo=r"f:\downloads\sdk", lab="F-Downloads"),
+        _c(3, r"E:\Downloads\setup.exe", "Downloads/E/setup.exe", order=0, full_hash="s"),
+        _c(4, r"F:\Downloads\setup.exe", "Downloads/F/setup.exe", order=1, full_hash="s"),
+    ])
+    assert set(items) == {"Downloads/E/sdk/lib/a.dll", "Downloads/F/sdk/lib/a.dll", "Downloads/E/setup.exe"}
+
+
+def test_unwanted_matches_are_left_out_of_keep_whole_folders_but_kept_in_git_repositories(tmp_path):
+    from filescan.models import RootConfig
+    from filescan.planning.build_plan import _classify_folder
+
+    layout = load_layout(_layout(tmp_path, (
+        "root_categories: [Downloads, GitHub]\nmap:\n  E:\\Downloads: Downloads\n  F:\\GitHub: GitHub\n"
+        "keep_whole:\n  - E:\\Downloads\n")))
+    common = dict(layout=layout, roots=[RootConfig(path=Path("E:/")), RootConfig(path=Path("F:/"))], excluded={},
+                  kept_reviews=[], pinned=[], keep_rules=[], repos={r"f:\github\tool"})
+    whole = _classify_folder(r"E:\Downloads\sdk\bin", 1, **common)
+    git = _classify_folder(r"F:\GitHub\tool\build", 2, **common)
+    assert (whole.repo, whole.git) == (r"e:\downloads\sdk", False)
+    assert (git.repo, git.git) == (r"f:\github\tool", True)

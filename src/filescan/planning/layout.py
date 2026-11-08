@@ -7,7 +7,12 @@ layout.yml has three parts:
   The order of the entries matters: when the same content is in several mapped
   folders, the entry that comes first keeps it (see build_plan.py);
 - ``stay_in_place``: folders that are not reorganised. They reach the server
-  only through the Phase 7 mirror.
+  only through the Phase 7 mirror;
+- ``keep_whole``: folders whose subfolders must stay complete, such as
+  downloaded software. Each subfolder is kept whole, as a Git repository is:
+  none of its files is dropped as a duplicate of a file elsewhere, and no other
+  file is dropped because of it. Files directly in the folder are kept once,
+  like any other file.
 
 Anything not mapped goes to ``Unsorted/<drive or share>/<path>``.
 """
@@ -44,6 +49,7 @@ class Layout:
     categories: tuple[str, ...]
     entries: list[LayoutEntry]
     stay_in_place: list[str] = field(default_factory=list)
+    keep_whole: list[str] = field(default_factory=list)
     _by_source: dict[str, LayoutEntry] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -66,6 +72,15 @@ class Layout:
     def is_stay_in_place(self, folder: str) -> bool:
         low = folder.rstrip("\\").lower()
         return any(low == s or low.startswith(s + "\\") for s in self._stay_keys())
+
+    def whole_unit(self, folder: str) -> str:
+        """The keep_whole subfolder containing folder (lower case), or "" if none does."""
+        low = folder.rstrip("\\").lower()
+        for k in self.keep_whole:
+            key = k.rstrip("\\").lower()
+            if low.startswith(key + "\\"):
+                return key + "\\" + low[len(key) + 1:].split("\\", 1)[0]
+        return ""
 
     def _stay_keys(self) -> list[str]:
         return [s.rstrip("\\").lower() for s in self.stay_in_place]
@@ -165,4 +180,14 @@ def load_layout(path: Path) -> Layout:
                                 "so it would never be moved; remove one of the two.")
     if problems:
         raise LayoutError(f"{path}:\n  " + "\n  ".join(problems))
-    return Layout(path=Path(path), categories=categories, entries=entries, stay_in_place=stay)
+    whole: list[str] = []
+    whole_node = sections.get("keep_whole", (None, None))[1]
+    if isinstance(whole_node, yaml.SequenceNode):
+        for item in whole_node.value:
+            folder = str(item.value).strip().rstrip("\\")
+            if not PureWindowsPath(folder).drive:
+                problems.append(f"line {item.start_mark.line + 1}: keep_whole entry {folder} is not a full path.")
+            whole.append(folder)
+    if problems:
+        raise LayoutError(f"{path}:\n  " + "\n  ".join(problems))
+    return Layout(path=Path(path), categories=categories, entries=entries, stay_in_place=stay, keep_whole=whole)
