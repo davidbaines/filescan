@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from filescan.config import load_config
+from filescan.inventory import everything
+from filescan.inventory.everything_scan import scan_root_with_everything
 from filescan.inventory.normalizer import normalize_path
 from filescan.problems import recorded, replace_under
 from filescan.inventory.volumes import MARKER, root_problem
@@ -40,8 +42,11 @@ class ScanResult:
 
 class InventoryScanner:
     def __init__(self, config: ScanConfig, *, rescan: bool = False, delta: bool = False,
-                 retry_unreadable: bool = False) -> None:
+                 retry_unreadable: bool = False, everything_runner: everything.Runner | None = None) -> None:
         self.config = config
+        # A root scanned before is listed with Everything when es.exe is found; --rescan always walks.
+        es = None if everything_runner or rescan else everything.find_es()
+        self.everything = everything_runner or (everything.default_runner(es) if es else None)
         self.rescan = rescan
         self.retry_unreadable = retry_unreadable
         self._unreadable: dict[str, tuple[str, str]] = {}  # folders left out of the root being scanned
@@ -218,9 +223,7 @@ class InventoryScanner:
         scan_run_id: int | None = None
         latest_scan_run_id = repo.latest_scan_run_id()
 
-        folder_scan_times: dict[Path, float] = (
-            self._load_folder_scan_times(db) if self.delta else {}
-        )
+        folder_scan_times: dict[Path, float] | None = None  # loaded when a quick update first walks a root
 
         # Server roots are listed by the server helper, never walked over SMB.
         for root_config in self.config.pc_root_configs:
@@ -242,8 +245,23 @@ class InventoryScanner:
             unreadable = {} if self.retry_unreadable else {
                 path: entry for path, entry in recorded(db, "scan", normalized_root).items() if entry[0] == "folder"}
             self._unreadable = unreadable
+            local = not str(normalized_root).startswith("\\\\")
+            if self.everything is not None and existing_stats is not None and not self.rescan and local:
+                print(f"Listing {root} with Everything...")
+                listed = scan_root_with_everything(self, db, repo, normalized_root, scan_run_id, self.everything)
+                if listed is not None:
+                    if listed.left_out:
+                        print(f"  {listed.left_out:,} folders that could not be read before were left out "
+                              "(on the Unreadable sheet; --retry-unreadable tries them again)")
+                    replace_under(db, "scan", root, listed.problems)
+                    repo.upsert_scan_stats(root=root, scan_run_id=scan_run_id, total_folders=listed.folders,
+                                           total_files=listed.files, indexed_folders=listed.written_folders,
+                                           indexed_files=listed.written_files)
+                    continue
             # A quick update needs an earlier scan to compare with; a new root is walked in full.
             root_delta = self.delta and existing_stats is not None
+            if root_delta and folder_scan_times is None:
+                folder_scan_times = self._load_folder_scan_times(db)
             if root_delta:
                 db_count = repo.count_active_folders(normalized_root)
                 print(f"Delta scan of {root} (up to {db_count:,} folders to check)...")
@@ -268,7 +286,7 @@ class InventoryScanner:
                         futures = {
                             pool.submit(
                                 self._scan_folder, folder, root, depth,
-                                folder_scan_times.get(folder) if root_delta else None,
+                                folder_scan_times.get(folder) if root_delta and folder_scan_times else None,
                             ): (folder, depth)
                             for folder, depth in queue
                         }

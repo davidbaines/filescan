@@ -21,7 +21,7 @@ poetry install                                   # install dependencies
 # repository root (copy .env.example). There is no built-in default. With no command,
 # filescan prints the help, grouped by stage.
 filescan status                                  # where the work stands and what to run next (reads only)
-filescan scan [--rescan] [--retry-unreadable]    # the whole inventory, then report; repeat scans read only changed folders unless --rescan;
+filescan scan [--rescan] [--retry-unreadable]    # the whole inventory, then report; repeat scans use Everything (es.exe) if found, else read only changed folders; --rescan walks every folder;
                                                  # items that could not be read before are left out unless --retry-unreadable
 #   the single steps, for when only one is needed (not in README.md):
 #   filescan scan-pc | import-server | hash-all
@@ -55,7 +55,7 @@ The live configuration and database are in `C:\filescan` (`config.yml`, `file_in
 |-------|--------|-----------|
 | Inventory | `inventory/full_scan.py` | `run_full_scan`: the drive check, then the steps of `scan` in turn; a failed step is reported and the rest still run |
 | Drives | `inventory/drive_check.py`, `inventory/volumes.py` | `check_drives`: connected drives against `roots` and `ignored_drives`, asks about new ones, saves their details as fields with ruamel.yaml (comments kept, previous version kept); `volumes.py` identifies a drive by serial or marker |
-| Scan the PC | `inventory/scanner.py` | `InventoryScanner`: multi-threaded walk of the PC roots, writes `folders`/`files` |
+| Scan the PC | `inventory/scanner.py`, `inventory/everything.py`, `inventory/everything_scan.py` | `InventoryScanner`: multi-threaded walk of the PC roots, writes `folders`/`files`; a root scanned before is updated from Everything's list (`scan_root_with_everything`), which writes only what changed and returns None to fall back to the walk |
 | Server import | `inventory/server_import.py` | `ServerImporter`: runs `fsagent list` over SSH and stores server files under UNC paths |
 | Hash | `dedupe/hash_all.py`, `inventory/server_hash.py` | A full hash for every file: PC files here, two per drive; server files by `fsagent hash` |
 | Exclusions and unwanted data | `exclusion_index.py`, `reporting/exclusions.py`, `cleanup/unwanted.py` | Rules from `config.yml` and `cleanup/unwanted_rules.yml`, applied by folder |

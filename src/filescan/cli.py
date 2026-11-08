@@ -110,8 +110,9 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ("scan", "scan-pc"):
         scan = add(name)
         scan.add_argument("--rescan", action="store_true",
-                          help="Read every PC folder again. Without it, a root scanned before is updated quickly: "
-                          "only folders whose date has changed are read, which misses files edited in place.")
+                          help="Walk every PC folder again. Without it, a root scanned before is updated from "
+                          "Everything (es.exe) when it is installed, or else only folders whose date has changed are "
+                          "read, which misses files edited in place.")
         scan.add_argument("--retry-unreadable", action="store_true", help=retry_help)
 
     review = add("review")

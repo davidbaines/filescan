@@ -19,6 +19,15 @@ from filescan.inventory.normalizer import normalize_path
 from filescan.storage import FileRepository, SQLiteDB
 
 
+@pytest.fixture(autouse=True)
+def no_everything(monkeypatch):
+    """Scans in tests walk the folders. Everything's index lags new files, and may not be installed;
+    tests of the Everything path pass their own es.exe runner."""
+    from filescan.inventory import everything
+
+    monkeypatch.setattr(everything, "find_es", lambda: None)
+
+
 @pytest.fixture
 def tmp_path(request) -> Path:
     base = Path.home() / "AppData" / "Local" / "Temp" / "filescan-tests"
