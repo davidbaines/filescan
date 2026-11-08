@@ -515,6 +515,12 @@ def gb(n: int) -> str:
 
 
 KEEP_PLANS = 2  # each plan folder is over 1 GB on a full inventory
+COPY_LOGS = ("server_copy_log.jsonl", "pc_copy_log.jsonl", "master_check.json")
+
+
+def copied(plan_folder: Path) -> bool:
+    """True if copy-master has written anything from this plan."""
+    return any((plan_folder / name).exists() for name in COPY_LOGS)
 
 
 def prune_old_plans(db: SQLiteDB, build_root: Path, keep: int = KEEP_PLANS) -> list[str]:
@@ -526,6 +532,8 @@ def prune_old_plans(db: SQLiteDB, build_root: Path, keep: int = KEEP_PLANS) -> l
     plans = sorted(d for d in build_root.glob("*") if d.is_dir() and (d / "plan.json").exists())
     removed = []
     for folder in plans[:-keep] if keep else plans:
+        if copied(folder):
+            continue  # its copy logs are the record of what is on the master
         for child in folder.iterdir():
             child.unlink()
         folder.rmdir()
@@ -568,6 +576,11 @@ def run_build_plan(config_path) -> Path:
         print(f"layout.yml line {entry.line}: {entry.source} matched no files (a typo, or all of it is excluded)")
     if removed:
         print(f"Older plans removed, keeping the newest {KEEP_PLANS}: {', '.join(removed)}")
+    earlier = [d.name for d in sorted((config.filescan_folder / "build").glob("*")) if d != out and copied(d)]
+    if earlier:
+        print(f"Note: plan {earlier[-1]} has already been copied to the master. Files this plan puts at a "
+              "different destination are copied again, and the earlier copies stay on the master until "
+              "they are removed. A different file already at a destination is reported as a conflict.")
     workbook = assemble_workbook(config).workbook
     print(f"\nPlan written to {out}, and its summary, unsorted folders, renamed files and long paths to "
           f"{workbook}. Nothing has been copied.")

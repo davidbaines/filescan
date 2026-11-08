@@ -95,3 +95,30 @@ def test_not_enough_space_copies_nothing(tmp_path):
         run_copy_master(config_path, yes=True, copy_runner=local_copy_runner, hash_runner=local_hash_runner,
                         free_bytes=10)
     assert not server_dst.exists() and not pc_dst.exists()
+
+
+def test_a_destination_longer_than_260_characters_is_copied(tmp_path):
+    from filescan.planning.copy_master import copy_from_pc
+
+    src = tmp_path / "a.txt"
+    src.write_bytes(b"deep")
+    dst = tmp_path / ("d" * 120) / ("e" * 120) / "a.txt"
+    assert len(str(dst)) > 260
+    result = copy_from_pc(str(src), str(dst), 1_000_000_000.0, full_hash(src))
+    assert result["status"] == "copied"
+    from filescan.cleanup.delete_folder import long_path
+    assert open(long_path(str(dst)), "rb").read() == b"deep"
+
+
+def test_a_plan_that_has_been_copied_is_never_pruned(tmp_path):
+    from filescan.planning.build_plan import prune_old_plans
+    from filescan.storage import SQLiteDB
+
+    build = tmp_path / "build"
+    for plan_id in ("20261101-000000", "20261102-000000", "20261103-000000"):
+        (build / plan_id).mkdir(parents=True)
+        (build / plan_id / "plan.json").write_text("{}")
+    (build / "20261101-000000" / "pc_copy_log.jsonl").write_text("{}\n")   # copied to the master
+    db = SQLiteDB(tmp_path / "db.sqlite")
+    assert prune_old_plans(db, build) == []
+    db.close()

@@ -123,3 +123,26 @@ def test_import_refuses_listing_outside_the_root(tmp_path: Path) -> None:
     bad = _lines({"type": "d", "path": "/somewhere/else", "mtime_ns": 0, "bad_name": False})
     summary = ServerImporter(config, runner=lambda rc: iter(bad)).run()
     assert summary.unrepresentable == ["/somewhere/else"]
+
+
+def test_the_master_root_is_never_listed(tmp_path):
+    import yaml
+
+    from filescan.config import load_config
+    from filescan.inventory.server_import import ServerImporter
+
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump({
+        "roots": [{"path": "//srv/disk3", "location": "server", "server_path": "/srv/disk3"},
+                  {"path": "//srv/disk2", "location": "server", "role": "master", "server_path": "/srv/disk2"}],
+        "server": {"ssh": "unused"},
+        "filescan_folder": str(tmp_path / "fs"), "database_folder": str(tmp_path / "fs"),
+        "database_filename": "db.sqlite"}))
+    listed = []
+
+    def runner(root_config):
+        listed.append(root_config.server_path)
+        return iter(['{"type": "d", "path": "%s", "mtime_ns": 0}' % root_config.server_path])
+
+    ServerImporter(load_config(config_path), runner=runner).run()
+    assert listed == ["/srv/disk3"]

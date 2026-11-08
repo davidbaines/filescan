@@ -37,6 +37,7 @@ from collections.abc import Callable, Iterable
 from datetime import datetime
 from pathlib import Path
 
+from filescan.cleanup.delete_folder import long_path
 from filescan.config import load_config
 from filescan.inventory.server_hash import WORK_DIR, unc_to_posix
 from filescan.inventory.server_import import FSAGENT
@@ -145,6 +146,8 @@ def local_hash_runner(paths: list[str]) -> Iterable[dict]:
 
 def copy_from_pc(src: str, dst: str, mtime: float, expected: str | None) -> dict:
     """Copy one PC file to the master over the network. Never overwrites; never reads the copy back."""
+    # Extended-length paths: some destinations pass 260 characters once the share's name is added.
+    src, dst = long_path(src), long_path(dst)
     if os.path.lexists(dst):
         return {"status": "exists"}  # checked by hash on the server afterwards
     os.makedirs(os.path.dirname(dst), exist_ok=True)

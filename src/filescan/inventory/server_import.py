@@ -183,7 +183,9 @@ class ServerImporter:
 
     def run(self) -> ImportSummary:
         summary = ImportSummary()
-        server_roots = [rc for rc in self.config.root_configs if rc.location == "server"]
+        # The master (disk2) is never listed: copy-master's logs record what is on it, and its files
+        # would otherwise count as unhashed copies in every report and could be planned for cleanup.
+        server_roots = [rc for rc in self.config.root_configs if rc.location == "server" and rc.role != "master"]
         if not server_roots:
             print("No server roots configured.")
             return summary
