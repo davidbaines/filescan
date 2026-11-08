@@ -23,7 +23,8 @@ poetry install                                   # install dependencies
 filescan status                                  # where the work stands and what to run next (reads only)
 filescan scan [--rescan]                         # the whole inventory, then report; repeat scans read only changed folders unless --rescan
 #   the single steps, for when only one is needed (not in README.md):
-#   filescan drives | scan-pc | import-server | hash-all
+#   filescan scan-pc | import-server | hash-all
+filescan retire-drive "LaCie Quadra"             # mark a drive that has gone for good as missing (database only)
 filescan report                                  # the reports again without scanning: one workbook plus CSVs
 filescan review server-trash                     # keep or trash, folder by folder, for one exclusion
 filescan cleanup-plan                            # files marked trash or matched by delete-candidate rules (CSV)
@@ -51,7 +52,8 @@ The live configuration and database are in `C:\filescan` (`config.yml`, `file_in
 
 | Stage | Module | Key class |
 |-------|--------|-----------|
-| Inventory | `inventory/full_scan.py` | `run_full_scan`: the steps of `scan` in turn; a failed step is reported and the rest still run |
+| Inventory | `inventory/full_scan.py` | `run_full_scan`: the drive check, then the steps of `scan` in turn; a failed step is reported and the rest still run |
+| Drives | `inventory/drive_check.py`, `inventory/volumes.py` | `check_drives`: connected drives against `roots` and `ignored_drives`, asks about new ones, saves their details as fields with ruamel.yaml (comments kept, previous version kept); `volumes.py` identifies a drive by serial or marker |
 | Scan the PC | `inventory/scanner.py` | `InventoryScanner`: multi-threaded walk of the PC roots, writes `folders`/`files` |
 | Server import | `inventory/server_import.py` | `ServerImporter`: runs `fsagent list` over SSH and stores server files under UNC paths |
 | Hash | `dedupe/hash_all.py`, `inventory/server_hash.py` | A full hash for every file: PC files here, two per drive; server files by `fsagent hash` |

@@ -218,16 +218,19 @@ Decided on 6 November:
 
 To build:
 
-- [x] Check each PC root's volume serial before scanning or cleanup, and skip a root on the wrong drive without marking its files missing. `filescan drives` lists the roots and their serials. Done 6 November; names and serials are in `C:\filescan\v2\config.yml`.
+- [x] Check each PC root's volume serial before scanning or cleanup, and skip a root on the wrong drive without marking its files missing. Done 6 November; names and serials are in `C:\filescan\v2\config.yml`.
 - [x] A `volumes` table: volume ID, fingerprint, expected letter, the letter last seen and when. The config holds what you declare (letter, name, volume ID); the database holds what filescan observes.
-- [x] `filescan drives` lists every connected volume, with its letter, size, label and file system (model and bus type need elevation, so they are left out), and marks the ones the config doesn't know. For a new one it asks for a friendly name, writes the marker and adds the root to `config.yml`. It also takes a one-line form, `drives --add K: --name "WD My Book Black"`.
-  - Insert the new lines as text, keeping your comments. Back up the config and show the change before writing.
+- [x] **Changed 8 November: the drive check is part of `filescan scan`, and the `drives` command is removed.** Scan lists every connected drive against `config.yml` and names the drives that are not attached. For a new drive it shows the volume label, model, manufacturer (when Windows gives one), disk and volume serials, size and free space, then asks for a name and whether to scan or ignore it. A drive to scan is added under `roots` and gets a marker; a drive to ignore goes under `ignored_drives` and gets no marker. A cloud drive can only be ignored.
+  - Each drive's details are fields in `config.yml`, never comments: `name`, `serial`, `label`, `size_gb`, `filesystem`, `model`, `manufacturer`, `bus`, `disk_serial`, plus `letter` for an ignored drive and `volume_id` for a drive with a marker. Free space is never saved. A changed label is reported and updated in `config.yml` and the `volumes` table.
+  - Model, bus and disk serial come from `Get-Partition | Get-Disk`, which needs no elevation.
+  - `config.yml` is written with ruamel.yaml, which keeps the comments. The previous version is kept beside it, and the new one must load before it replaces it.
+  - Google Drive gives every one of its drives the serial 1983-1116, so an ignored drive is matched by its marker, or by its serial with its size or letter, and the `volumes` table is keyed on serial and size.
 - [x] The scan and the cleanup commands check the marker as well as the serial. A root on the wrong letter is skipped with a message naming the letter it is on now.
 - [x] Leave markers out of the inventory (and so out of the master build).
   - [ ] Leave them out of the PC → disk2 mirror (Phase 7).
 - [x] C: is the system drive, and writing to `C:\` needs an elevated terminal. Decided 8 November: C: gets no marker and is checked by serial only, since nothing on C: changes without the user's approval.
-- [x] A way to retire a drive that has gone for good or been reformatted, such as `drives --retire "LaCie Quadra"`. It marks the drive's files missing, so they no longer count as copies.
-- [ ] **[USER]** Give the WD My Book Black the letter K: in Disk Management, then register it with `drives`, scan it and run `duplicates`.
+- [x] A way to retire a drive that has gone for good or been reformatted, now `filescan retire-drive "LaCie Quadra"`. It marks the drive's files missing, so they no longer count as copies.
+- [ ] **[USER]** Give the WD My Book Black the letter K: in Disk Management, connect it and run `filescan scan`, which asks for its name and whether to scan it.
 - [ ] **[USER]** Check whether Explorer can open the My Book White's share. Older models only offer SMB1, which Windows 10 turns off. If so, choose between turning on the SMB1 client for the copy and mounting the share on the server for `fsagent` to list.
 
 ### Phase 5: build the server master on disk2

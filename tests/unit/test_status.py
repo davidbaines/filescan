@@ -36,7 +36,7 @@ def test_every_listed_command_exists():
     parser = build_parser()
     for _, items in COMMAND_GROUPS:
         for name, _ in items:
-            parser.parse_args([name] + (["x"] if name == "delete-folder" else [])
+            parser.parse_args([name] + (["x"] if name in ("delete-folder", "retire-drive") else [])
                               + (["--plan", "p"] if name in ("execute", "cleanup", "cleanup-restore",
                                                              "cleanup-purge") else []))
 

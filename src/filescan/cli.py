@@ -12,7 +12,7 @@ from filescan.inventory.full_scan import run_full_scan
 from filescan.inventory.preflight import check_db_space, check_stale_roots
 from filescan.inventory.scanner import run_scan
 from filescan.inventory.server_import import run_import_server
-from filescan.inventory.volumes import add_drive, retire_drive, run_drives
+from filescan.inventory.volumes import retire_drive
 from filescan.planning.build_plan import run_build_plan
 from filescan.planning.copy_master import run_copy_master
 from filescan.reporting.report import run_reports
@@ -46,10 +46,12 @@ COMMAND_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("copy-master", "Copy the latest build plan to disk2 and check every file by hash. Needs --yes to copy."),
     ]),
     ("The steps of scan, on their own (only when one step is needed)", [
-        ("drives", "Show each PC root's drive, its volume serial number and whether the right drive is connected."),
         ("scan-pc", "Walk the PC roots and record every folder and file (size, dates) in the database."),
         ("import-server", "List the server roots with fsagent over SSH and load them into the database."),
         ("hash-all", "Give every file a full hash, PC and server (resumable; reads only what is missing)."),
+    ]),
+    ("Rarely needed", [
+        ("retire-drive", "Mark every file of a drive that has gone for good as missing. Changes only the database."),
     ]),
 ]
 
@@ -70,7 +72,7 @@ Run "filescan <command> -h" for a command's options. README.md explains each ste
 HELP: dict[str, str] = {name: text for _, items in COMMAND_GROUPS for name, text in items}
 
 # Commands that make or check the inventory, so a warning about an old scan is beside the point.
-_NO_STALE_CHECK = ("scan", "scan-pc", "import-server", "hash-all", "status", "drives", "report")
+_NO_STALE_CHECK = ("scan", "scan-pc", "import-server", "hash-all", "status", "retire-drive", "report")
 
 
 def _commands_text() -> str:
@@ -127,12 +129,8 @@ def build_parser() -> argparse.ArgumentParser:
                              help="Only files quarantined at least this long ago (default 14).")
             sub.add_argument("--yes", action="store_true", help="Really delete. Without it, only report what would go.")
 
-    drives = add("drives")
-    drives.add_argument("--add", metavar="LETTER", help="Register the drive on this letter, e.g. K: (writes a "
-                        "marker file on it and adds it to config.yml, keeping a backup).")
-    drives.add_argument("--name", help="Friendly name for --add, e.g. \"WD My Book Black\".")
-    drives.add_argument("--retire", metavar="NAME", help="Mark every file of a drive that has gone for good as "
-                        "missing, so it no longer counts as a copy. Changes only the database.")
+    retire = add("retire-drive")
+    retire.add_argument("name", help="The drive's name in config.yml, e.g. \"LaCie Quadra\", or its root's path.")
 
     cm = add("copy-master")
     cm.add_argument("--yes", action="store_true", help="Really copy. Without it, only report what would be copied.")
@@ -174,25 +172,18 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command not in _NO_STALE_CHECK:
         check_stale_roots(config)
-    if args.command not in ("status", "drives"):
+    if args.command != "status":
         print(f"Current process: {args.command}")
 
     command = args.command
     if command == "status":
         run_status(config, config_path=args.config, config_source=args.config_source)
-    elif command == "drives":
-        if args.add:
-            if not args.name:
-                raise SystemExit('--add needs --name, for example: filescan drives --add K: --name "WD My Book Black"')
-            add_drive(args.config, config, args.add, args.name)
-        elif args.retire:
-            db = SQLiteDB(config.database_path)
-            try:
-                retire_drive(config, args.retire, db)
-            finally:
-                db.close()
-        else:
-            run_drives(config)
+    elif command == "retire-drive":
+        db = SQLiteDB(config.database_path)
+        try:
+            retire_drive(config, args.name, db)
+        finally:
+            db.close()
     elif command == "scan":
         failed = run_full_scan(args.config, rescan=args.rescan, delta=not args.rescan)
         return 1 if failed else 0

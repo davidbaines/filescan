@@ -5,7 +5,7 @@ import pytest
 import yaml
 
 from filescan.inventory import volumes
-from filescan.inventory.volumes import MARKER, insert_root, root_lines, root_problem
+from filescan.inventory.volumes import MARKER, root_problem
 from filescan.models import RootConfig
 
 FP = {"serial": "AB12-CD34", "size": 4_000_000_000_000, "label": "MyBook", "filesystem": "NTFS"}
@@ -57,36 +57,6 @@ def test_a_drive_on_the_wrong_letter_is_named_and_not_followed(tmp_path):
     gone = RootConfig(path=tmp_path / "unplugged", name="LaCie Quadra", serial="868A-45A5")
     problem = _check(gone, serial=None, letters=["K:"], elsewhere={"K:": {"serial": "868A-45A5"}})
     assert "not connected" in problem and "on K: now" in problem
-
-
-CONFIG = """\
-# my notes at the top
-roots:
-  # --- PC sources ---
-  - path: "D:/"
-    name: "Disk D"
-    serial: "6C35-B138"
-  - path: "J:/"
-    name: "LaCie Quadra"
-    serial: "868A-45A5"
-  # To add a drive: ...
-
-  # --- Server sources ---
-  - path: "//192.168.1.133/disk1"
-    location: server
-    server_path: /srv/disk1
-
-server:
-  ssh: david@192.168.1.133
-"""
-
-
-def test_a_new_drive_goes_after_the_last_pc_root_and_comments_are_kept():
-    text = insert_root(CONFIG, root_lines("K:", "WD My Book Black", "AB12-CD34", "v1"))
-    assert "# my notes at the top" in text and "# --- Server sources ---" in text
-    roots = yaml.safe_load(text)["roots"]
-    assert [r["path"] for r in roots] == ["D:/", "J:/", "K:/", "//192.168.1.133/disk1"]
-    assert roots[2] == {"path": "K:/", "name": "WD My Book Black", "serial": "AB12-CD34", "volume_id": "v1"}
 
 
 def test_retire_marks_the_drive_missing_only_when_it_is_not_connected(tmp_path):

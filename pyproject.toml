@@ -15,6 +15,7 @@ tqdm = "^4.67.3"
 pytest = "^9.0.2"
 textual = "^8.2.4"
 send2trash = "^2.1.0"
+ruamel-yaml = "^0.18"
 
 [tool.poetry.dev-dependencies]
 flake8 = {version = ">=7.3.0,<8.0.0", python = ">=3.12"}

@@ -1,12 +1,14 @@
 """`filescan scan`: the whole inventory in one command.
 
-It runs four steps in order, each of which also exists as a command of its own:
+It first checks the connected drives against config.yml (drive_check.py): it
+lists which are attached, asks about new ones in a terminal and saves their
+details. A root on the wrong drive is skipped by the scan, so its files are
+never marked missing. Then it runs three steps in order, each of which also
+exists as a command of its own:
 
-1. drives: check each PC root is on the drive it should be (a root on the
-   wrong drive is skipped by the scan, so its files are never marked missing);
-2. scan-pc: record every PC folder and file;
-3. import-server: list the server roots with fsagent over SSH;
-4. hash-all: give every file without one a full hash, PC and server;
+1. scan-pc: record every PC folder and file;
+2. import-server: list the server roots with fsagent over SSH;
+3. hash-all: give every file without one a full hash, PC and server;
 
 then it writes every report (`filescan report`) and lists what it wrote.
 
@@ -28,14 +30,24 @@ from filescan.dedupe.hash_all import run_hash_all
 from filescan.inventory.preflight import check_db_space
 from filescan.inventory.scanner import run_scan
 from filescan.inventory.server_import import run_import_server
-from filescan.inventory.volumes import run_drives
+from filescan.inventory.drive_check import check_drives, print_check
 from filescan.reporting.report import print_written, run_reports_for_config
 
 
 def run_full_scan(config_path: str | Path, *, rescan: bool = False, delta: bool = False) -> list[str]:
     """Run every inventory step. Returns the names of the steps that failed."""
-    config = load_config(config_path)
-    steps = [("drives", lambda: run_drives(config))]
+    print("=== Drives ===")
+    failed: list[str] = []
+    try:
+        print_check(check_drives(Path(config_path)))
+    except SystemExit:
+        raise
+    except Exception as exc:  # the scan still checks each root's drive before reading it
+        failed.append("drives")
+        print(f"The drive check failed: {exc}")
+        traceback.print_exc(limit=3)
+    config = load_config(config_path)  # read again: the check may have added a drive
+    steps = []
     if config.pc_root_configs:
         steps.append(("scan-pc", lambda: (check_db_space(config),
                                           run_scan(config_path, rescan=rescan, delta=delta))))
@@ -43,7 +55,6 @@ def run_full_scan(config_path: str | Path, *, rescan: bool = False, delta: bool 
         steps.append(("import-server", lambda: run_import_server(config_path)))
     steps.append(("hash-all", lambda: run_hash_all(config_path)))
 
-    failed: list[str] = []
     for number, (name, step) in enumerate(steps, 1):
         print(f"\n=== Step {number} of {len(steps)}: {name} ===")
         try:
