@@ -116,4 +116,6 @@ def test_retire_marks_the_drive_missing_only_when_it_is_not_connected(tmp_path):
 
 def test_cloud_drives_are_recognised_by_label():
     assert volumes.is_cloud_drive({"label": "david_baines@sil.org - Google..."})  # as Windows shortens it
-    assert not volumes.is_cloud_drive({"label": "MyBook"})
+    assert volumes.is_cloud_drive({"label": "davidcbaines@gmail.com - Goog..."})  # cut before "Google"
+    assert volumes.is_cloud_drive({"label": "My Drive", "serial": "1983-1116"})
+    assert not volumes.is_cloud_drive({"label": "MyBook", "serial": "868A-45A5"})

@@ -49,7 +49,9 @@ from filescan.models import RootConfig, ScanConfig
 
 MARKER = ".filescan-volume.yaml"
 # Virtual drives of cloud services: reading a file there downloads it, so they are never offered for adding.
-CLOUD_LABEL_WORDS = ("google", "onedrive", "dropbox", "icloud")  # labels are cut short, e.g. "... - Google..."
+# Windows cuts labels to 32 characters, so "davidcbaines@gmail.com - Google Drive" arrives as "... - Goog...".
+CLOUD_LABEL_WORDS = ("goog", "onedrive", "dropbox", "icloud")
+GOOGLE_DRIVE_SERIAL = "1983-1116"  # Google Drive for desktop gives every one of its drives this serial
 SYSTEM_DRIVE = (os.environ.get("SystemDrive") or "C:").upper()
 _DRIVE_REMOVABLE, _DRIVE_FIXED = 2, 3
 
@@ -123,7 +125,7 @@ def read_marker(volume: Path | str) -> dict | None:
 
 def is_cloud_drive(fp: dict) -> bool:
     label = (fp.get("label") or "").lower()
-    return any(word in label for word in CLOUD_LABEL_WORDS)
+    return fp.get("serial") == GOOGLE_DRIVE_SERIAL or any(word in label for word in CLOUD_LABEL_WORDS)
 
 
 def is_system_drive(path: Path | str) -> bool:
