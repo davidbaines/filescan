@@ -235,7 +235,7 @@ class InventoryScanner:
             # A quick update needs an earlier scan to compare with; a new root is walked in full.
             root_delta = self.delta and existing_stats is not None
             if root_delta:
-                db_count = repo.count_active_folders()
+                db_count = repo.count_active_folders(normalized_root)
                 print(f"Delta scan of {root} (up to {db_count:,} folders to check)...")
                 folder_count = None
             else:

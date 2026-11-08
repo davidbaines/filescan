@@ -134,3 +134,12 @@ def test_upsert_files_clears_hashes_when_only_mtime_changes(tmp_path: Path, make
 
     assert _hash_row(db, created[0]) is None
     db.close()
+
+
+def test_count_active_folders_counts_only_under_the_root(tmp_path: Path, make_repo) -> None:
+    one, two = tmp_path / "one", tmp_path / "two"
+    db, repo = make_repo(tmp_path / "repository.db")
+    index_paths(repo, one, build_tree(one, {"a/f.txt": b"1", "b/g.txt": b"2"}))
+    index_paths(repo, two, build_tree(two, {"c/h.txt": b"3"}))
+    assert repo.count_active_folders(one) + repo.count_active_folders(two) == repo.count_active_folders()
+    assert repo.count_active_folders(one) > repo.count_active_folders(two) > 0

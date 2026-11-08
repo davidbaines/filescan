@@ -192,8 +192,15 @@ class FileRepository:
     def list_active_folders(self) -> list[FolderRecord]:
         return list(self.iter_active_folders())
 
-    def count_active_folders(self) -> int:
-        row = self.db.conn.execute("SELECT COUNT(*) AS count FROM folders WHERE is_missing = 0").fetchone()
+    def count_active_folders(self, root: Path | None = None) -> int:
+        """Folders not marked missing: all of them, or only those under root."""
+        if root is None:
+            row = self.db.conn.execute("SELECT COUNT(*) AS count FROM folders WHERE is_missing = 0").fetchone()
+        else:
+            exact, prefix = self._path_prefix(root)
+            row = self.db.conn.execute(
+                "SELECT COUNT(*) AS count FROM folders WHERE is_missing = 0 AND (path = ? OR path LIKE ? ESCAPE '|')",
+                (exact, prefix)).fetchone()
         return 0 if row is None else int(row["count"])
 
     def _folder_from_row(self, row) -> FolderRecord:
