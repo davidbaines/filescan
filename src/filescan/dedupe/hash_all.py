@@ -141,6 +141,8 @@ def run_hash_all_for_config(config: ScanConfig, *, server_runner: HashRunner | N
             print(f"{result['outside_roots']:,} files are under no configured root and are left alone.")
         if pc:
             result.update(hash_pc_files(db, config, pc))
+        else:
+            replace_tried(db, "hash", [], [])  # still drops entries for files since deleted
     finally:
         db.close()
     if server:

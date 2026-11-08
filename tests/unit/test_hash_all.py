@@ -118,3 +118,23 @@ def test_hash_all_leaves_out_files_it_could_not_read_before(tmp_path, monkeypatc
     db = SQLiteDB(load_config(config_path).database_path)
     assert db.conn.execute("SELECT COUNT(*) FROM access_problems").fetchone()[0] == 0
     db.close()
+
+
+def test_a_deleted_unreadable_file_drops_off_the_list_even_when_nothing_is_left_to_hash(tmp_path, monkeypatch):
+    config_path = _pc_config(tmp_path)
+
+    def locked(hasher, record):
+        raise PermissionError(13, "Permission denied", str(record.path))
+
+    monkeypatch.setattr(hash_all, "hash_if_unchanged", locked)
+    run_hash_all(config_path)
+    db = SQLiteDB(load_config(config_path).database_path)
+    assert db.conn.execute("SELECT COUNT(*) FROM access_problems").fetchone()[0] == 2
+    db.close()
+    (tmp_path / "pc" / "Docs" / "unique.txt").unlink()
+    run_scan(config_path, delta=True)
+    run_hash_all(config_path)  # the other file is still on the list, so nothing is hashed
+    db = SQLiteDB(load_config(config_path).database_path)
+    names = {Path(r[0]).name for r in db.conn.execute("SELECT path FROM access_problems")}
+    assert "unique.txt" not in names and "edited.txt" in names
+    db.close()
