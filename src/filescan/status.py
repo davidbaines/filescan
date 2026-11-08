@@ -114,7 +114,7 @@ def _roots(status: Status, db: SQLiteDB, config: ScanConfig) -> None:
             drive = "drive OK" if problem is None else problem
         else:
             drive = "server"
-        files = f"{row['indexed_files']:>10,} files" if row else " " * 16
+        files = f"{_active_files(db, rc.path):>10,} files" if row else " " * 16
         label = f" ({rc.name})" if rc.name else ""
         status.add(f"{str(rc.path):<{width}}  scanned {_when(row['last_scanned_at'] if row else None)}  {files}  "
                    f"{drive}{label}")
@@ -125,6 +125,15 @@ def _roots(status: Status, db: SQLiteDB, config: ScanConfig) -> None:
             status.todo.append(f"scan: {rc.path} was last "
                                f"scanned more than {config.scan_max_age.days} days ago.")
     _hashes(status, db)
+
+
+def _active_files(db: SQLiteDB, root: Path) -> int:
+    """Files recorded under root and not missing. A range on path uses the index, unlike LIKE."""
+    prefix = str(root).rstrip("\\") + "\\"
+    upper = prefix[:-1] + chr(ord("\\") + 1)  # every path that starts with prefix sorts below this
+    row = db.conn.execute("SELECT COUNT(*) FROM files WHERE path >= ? AND path < ? AND is_missing = 0",
+                          (prefix, upper)).fetchone()
+    return int(row[0]) if row else 0
 
 
 def _hashes(status: Status, db: SQLiteDB) -> None:
@@ -207,8 +216,9 @@ def _plans(status: Status, config: ScanConfig, now: datetime) -> None:
                 status.todo.append(f"cleanup-purge --plan \"{folder}\": quarantined files have waited "
                                    f"{PURGE_WAIT_DAYS} days. Run it without --yes first to see the totals.")
         if counts.get("error"):
-            status.todo.append(f"cleanup --plan \"{folder}\": {counts['error']:,} files could not be moved. Fix "
-                               "their permissions, then run it again; it skips what is already done.")
+            status.todo.append(f"cleanup --plan \"{folder}\": {counts['error']:,} files could not be moved. They "
+                               "are on the Unreadable sheet: delete them or make them readable yourself, then run it "
+                               "again; it skips what is already done.")
 
 
 def _deletions(status: Status, config: ScanConfig) -> None:
@@ -253,8 +263,21 @@ def _layout(status: Status, config: ScanConfig) -> None:
                    f"Unsorted {meta['unsorted_bytes'] / 1e9:,.1f} GB; {meta['unhashed']:,} kept files without a hash")
         if layout.stat().st_mtime > builds[-1].stat().st_mtime:
             status.todo.append("build-plan: layout.yml has changed since the last plan; run it again.")
-        status.todo.append(f"Review the build plan in {builds[-1].parent} (summary.csv, unsorted.csv, renamed.csv).")
-    status.add("copy-master, verify-coverage and pc-plan are not built yet")
+        latest = builds[-1].parent
+        check = latest / "master_check.json"
+        if check.exists():
+            result = json.loads(check.read_text(encoding="utf-8"))
+            status.add(f"copy-master: {result.get('on master', 0):,} files checked on the master; "
+                       + ("complete" if result.get("complete") else "not complete, see not_on_master.csv"))
+        elif any((latest / name).exists() for name in ("server_copy_log.jsonl", "pc_copy_log.jsonl")):
+            status.add("copy-master: started but not finished; run `copy-master --yes` again to carry on")
+        else:
+            status.add("copy-master: this plan has not been copied")
+            status.todo.append(f"Review the build plan: the workbook's Build summary, Unsorted and Renamed sheets "
+                               f"(files in {latest}).")
+            status.todo.append("copy-master: run it without --yes to see what would be copied against the free "
+                               "space on disk2; add --yes only when you are ready to copy.")
+    status.add("pc-plan (Phase 6) is not built yet")
 
 
 def gather(config: ScanConfig, *, config_path: Path | None = None, config_source: str = "",
