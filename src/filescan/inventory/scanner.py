@@ -171,13 +171,8 @@ class InventoryScanner:
             raw_files=len(all_files),
         )
 
-    def _count_folders(self, root: Path) -> int | None:
-        """Count folders before the scan so the progress bar has a total.
-
-        Network roots return None: a pre-walk would double the round trips.
-        """
-        if str(root).startswith("\\\\"):
-            return None
+    def _count_folders(self, root: Path) -> int:
+        """Count folders before the scan of a local root so the progress bar has a total."""
         count = 1  # root itself
         stack: list[Path] = [root]
         while stack:
@@ -266,10 +261,14 @@ class InventoryScanner:
                 db_count = repo.count_active_folders(normalized_root)
                 print(f"Delta scan of {root} (up to {db_count:,} folders to check)...")
                 folder_count = None
+            elif not local:
+                # Counting first would read every network folder twice; the bar shows a running count instead.
+                print(f"Full scan of {root} (a network root, so the folders are not counted first)...")
+                folder_count = None
             else:
                 print(f"Counting folders in {root}...", end="", flush=True)
                 folder_count = self._count_folders(normalized_root)
-                print(" skipped (network root)" if folder_count is None else f" {folder_count:,}")
+                print(f" {folder_count:,}")
             left_out: list[tuple[str, str, str]] = []
             queue: list[tuple[Path, int]] = [(normalized_root, 0)]
             visited: set[Path] = {normalized_root}
