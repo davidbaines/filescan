@@ -144,7 +144,7 @@ Files are scattered across the PC (C: user folders, D:, E:, F:), the LaCie J: an
   - Server roots need `server_path` and may list `exclude_dirs` (for example `lost+found`); the SSH target is the top-level `server: {ssh: david@192.168.1.133}`.
   - A failed or empty listing raises an error before anything is marked missing.
   - Convert the server's `mtime_ns` to the stored float in one shared function. The stale-hash check compares mtimes exactly, so any drift would clear every server hash on each re-import.
-- [x] **Record what the import couldn't take.** Done 8 November: an `access_problems` table holds what `scan`, `import-server` and hashing could not read, including server names Windows cannot represent; each step replaces only what it tried again. The workbook's Unreadable sheet lists them by folder, with files cleanup could not quarantine. filescan does not change permissions; the user deletes or deals with these folders.
+- [x] **Record what the import couldn't take.** Done 8 November: an `access_problems` table holds what `scan`, `import-server` and hashing could not read, including server names Windows cannot represent; each step replaces only what it tried again. Since 8 November, scan and hash-all leave out what is already on the list, even with `--rescan`, unless `--retry-unreadable` is given. The workbook's Unreadable sheet lists them by folder, with files cleanup could not quarantine. filescan does not change permissions; the user deletes or deals with these folders.
   - [ ] Make the gate before any wipe count them alongside the excluded bytes.
 
 ### Phase 3: task 2, which files the server lacks

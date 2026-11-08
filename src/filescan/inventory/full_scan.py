@@ -40,7 +40,8 @@ def _duration(seconds: float) -> str:
     return f"{minutes}m {seconds:02d}s" if minutes else f"{seconds}s"
 
 
-def run_full_scan(config_path: str | Path, *, rescan: bool = False, delta: bool = False) -> list[str]:
+def run_full_scan(config_path: str | Path, *, rescan: bool = False, delta: bool = False,
+                  retry_unreadable: bool = False) -> list[str]:
     """Run every inventory step. Returns the names of the steps that failed."""
     print("=== Drives ===")
     failed: list[str] = []
@@ -58,10 +59,11 @@ def run_full_scan(config_path: str | Path, *, rescan: bool = False, delta: bool 
     steps = []
     if config.pc_root_configs:
         steps.append(("scan-pc", lambda: (check_db_space(config),
-                                          run_scan(config_path, rescan=rescan, delta=delta))))
+                                          run_scan(config_path, rescan=rescan, delta=delta,
+                                                   retry_unreadable=retry_unreadable))))
     if config.server_roots:
         steps.append(("import-server", lambda: run_import_server(config_path)))
-    steps.append(("hash-all", lambda: run_hash_all(config_path)))
+    steps.append(("hash-all", lambda: run_hash_all(config_path, retry_unreadable=retry_unreadable)))
 
     for number, (name, step) in enumerate(steps, 1):
         print(f"\n=== Step {number} of {len(steps)}: {name} ===")

@@ -8,12 +8,15 @@ permissions to get round them.
 Each step replaces only what it actually tried again, so an interrupted run
 never wipes the list:
 
-- scan: every problem under each PC root it walked (a quick update still lists
-  every folder, so unreadable folders are tried each time);
+- scan: every problem under each PC root it walked. A folder already on the
+  list is not tried again, and its entry is kept;
 - import: every problem under each server root it listed, including names
   Windows cannot represent;
-- hash: the files it tried to hash. A file that now has a hash, or has gone,
-  drops off the list.
+- hash: the files it tried to hash. A file already on the list is not tried
+  again. A file that now has a hash, or has gone, drops off the list.
+
+`scan --retry-unreadable` and `hash-all --retry-unreadable` try everything on
+the list again, for when the user has made some of it readable.
 
 Files that cleanup could not move into quarantine are read from each cleanup
 plan's action log when the report is written.
@@ -65,6 +68,18 @@ def replace_tried(db: SQLiteDB, stage: str, tried: list[str], entries: list[Entr
                            SELECT f.path FROM files f LEFT JOIN file_hashes h ON h.file_id = f.id
                            WHERE f.is_missing = 1 OR (h.full_hash IS NOT NULL AND h.full_hash != ''))""", (stage,))
     db.conn.commit()
+
+
+def recorded(db: SQLiteDB, stage: str, root: Path | str | None = None) -> dict[str, tuple[str, str]]:
+    """path -> (kind, problem) for what this stage could not read before, under root if given."""
+    ensure_table(db)
+    if root is None:
+        rows = db.conn.execute("SELECT path, kind, problem FROM access_problems WHERE stage = ?", (stage,))
+    else:
+        exact, pattern = path_prefix(root)
+        rows = db.conn.execute("SELECT path, kind, problem FROM access_problems WHERE stage = ? "
+                               "AND (path = ? OR path LIKE ? ESCAPE '|')", (stage, exact, pattern))
+    return {r[0]: (r[1], r[2]) for r in rows}
 
 
 def count(db: SQLiteDB) -> int:

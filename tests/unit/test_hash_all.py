@@ -94,3 +94,27 @@ def test_hash_all_hashes_server_files_on_the_server_and_reports_the_same_keys(tm
     assert result["server_hashed"] == 3 and result["server_errors"] == 0
     assert {"hashed", "unreadable", "changed", "outside_roots"} <= set(result)
     assert _hashes(config)["other-name.jpg"] == full_hash(srv / "david/Old/other-name.jpg")
+
+
+def test_hash_all_leaves_out_files_it_could_not_read_before(tmp_path, monkeypatch):
+    config_path = _pc_config(tmp_path)
+    real = hash_all.hash_if_unchanged
+    tried: list[str] = []
+
+    def locked(hasher, record):
+        if record.filename == "unique.txt":
+            tried.append(record.filename)
+            raise PermissionError(13, "Permission denied", str(record.path))
+        return real(hasher, record)
+
+    monkeypatch.setattr(hash_all, "hash_if_unchanged", locked)
+    assert run_hash_all(config_path)["unreadable"] == 1
+    second = run_hash_all(config_path)
+    assert (second["unreadable"], second["left_unreadable"], tried) == (0, 1, ["unique.txt"])
+
+    monkeypatch.setattr(hash_all, "hash_if_unchanged", real)  # the user made it readable
+    third = run_hash_all(config_path, retry_unreadable=True)
+    assert third["hashed"] == 1 and "unique.txt" in _hashes(load_config(config_path))
+    db = SQLiteDB(load_config(config_path).database_path)
+    assert db.conn.execute("SELECT COUNT(*) FROM access_problems").fetchone()[0] == 0
+    db.close()

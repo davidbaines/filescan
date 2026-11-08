@@ -10,7 +10,7 @@ from pathlib import Path
 
 from filescan.config import load_config
 from filescan.inventory.normalizer import normalize_path
-from filescan.problems import replace_under
+from filescan.problems import recorded, replace_under
 from filescan.inventory.volumes import MARKER, root_problem
 from filescan.models import FileRecord, FolderRecord, ScanConfig
 from filescan.progress import SkipLog, progress_bar
@@ -39,9 +39,12 @@ class ScanResult:
 
 
 class InventoryScanner:
-    def __init__(self, config: ScanConfig, *, rescan: bool = False, delta: bool = False) -> None:
+    def __init__(self, config: ScanConfig, *, rescan: bool = False, delta: bool = False,
+                 retry_unreadable: bool = False) -> None:
         self.config = config
         self.rescan = rescan
+        self.retry_unreadable = retry_unreadable
+        self._unreadable: dict[str, tuple[str, str]] = {}  # folders left out of the root being scanned
         self.delta = delta and not rescan  # rescan overrides delta
         self._logged_skips: set[tuple[str, Path, str]] = set()
         self._skip_paths = config.skip_paths
@@ -175,7 +178,7 @@ class InventoryScanner:
         while stack:
             listing = self._list_folder_quiet(stack.pop())
             for entry in listing:
-                if self._keep_dir(entry):
+                if self._keep_dir(entry) and str(Path(entry.path)) not in self._unreadable:
                     stack.append(Path(entry.path))
                     count += 1
         return count
@@ -235,6 +238,10 @@ class InventoryScanner:
             if scan_run_id is None:
                 scan_run_id = repo.begin_scan_run()
             normalized_root = normalize_path(root)
+            # Folders that could not be listed before are not tried again; their entries are kept.
+            unreadable = {} if self.retry_unreadable else {
+                path: entry for path, entry in recorded(db, "scan", normalized_root).items() if entry[0] == "folder"}
+            self._unreadable = unreadable
             # A quick update needs an earlier scan to compare with; a new root is walked in full.
             root_delta = self.delta and existing_stats is not None
             if root_delta:
@@ -245,6 +252,7 @@ class InventoryScanner:
                 print(f"Counting folders in {root}...", end="", flush=True)
                 folder_count = self._count_folders(normalized_root)
                 print(" skipped (network root)" if folder_count is None else f" {folder_count:,}")
+            left_out: list[tuple[str, str, str]] = []
             queue: list[tuple[Path, int]] = [(normalized_root, 0)]
             visited: set[Path] = {normalized_root}
             total_folders = 1
@@ -298,6 +306,9 @@ class InventoryScanner:
                                 if subdir in visited:
                                     continue
                                 visited.add(subdir)
+                                if str(subdir) in unreadable:
+                                    left_out.append(("folder", str(subdir), unreadable[str(subdir)][1]))
+                                    continue
                                 new_subdirs.append(subdir)
                             queue.extend((subdir, depth + 1) for subdir in new_subdirs)
                             total_folders += len(new_subdirs)
@@ -305,11 +316,14 @@ class InventoryScanner:
             db.conn.commit()
             if root_delta:
                 print(f"  {indexed_folders:,} folders read again, {skipped_folders:,} unchanged")
+            if left_out:
+                print(f"  {len(left_out):,} folders that could not be read before were left out "
+                      "(on the Unreadable sheet; --retry-unreadable tries them again)")
             repo.mark_missing_under_root(root, scan_run_id)
             prefix = str(normalized_root).rstrip("\\").lower() + "\\"
             under = [("folder" if what == "folder" else "file", path, problem)
                      for what, path, problem in self.skips.entries or []
-                     if path.lower().startswith(prefix) or path.lower() == prefix[:-1]]
+                     if path.lower().startswith(prefix) or path.lower() == prefix[:-1]] + left_out
             replace_under(db, "scan", root, under)
             repo.upsert_scan_stats(
                 root=root,
@@ -324,5 +338,7 @@ class InventoryScanner:
         return scan_run_id if scan_run_id is not None else latest_scan_run_id
 
 
-def run_scan(config_path: str | Path, *, rescan: bool = False, delta: bool = False) -> int:
-    return InventoryScanner(load_config(config_path), rescan=rescan, delta=delta).scan()
+def run_scan(config_path: str | Path, *, rescan: bool = False, delta: bool = False,
+             retry_unreadable: bool = False) -> int:
+    return InventoryScanner(load_config(config_path), rescan=rescan, delta=delta,
+                            retry_unreadable=retry_unreadable).scan()

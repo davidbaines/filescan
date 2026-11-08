@@ -15,8 +15,9 @@ hash, whatever its size, and the database then holds the whole picture.
 It is restartable: hashes are committed every few hundred files, and a second
 run hashes only what is still missing, so it also suits a top-up after a scan.
 A file whose size or date changes loses its hash at the next scan. Files that
-cannot be read are written to the log in the filescan folder's logs folder and
-are tried again on the next run.
+cannot be read are stored in the database (problems.py) and listed on the
+workbook's Unreadable sheet. Later runs leave them out unless
+--retry-unreadable is given.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ from filescan.config import load_config
 from filescan.dedupe.hashing import full_hash, hash_if_unchanged
 from filescan.inventory.server_hash import HashRunner, ServerHasher, unc_to_posix
 from filescan.models import FileRecord, ScanConfig
-from filescan.problems import replace_tried
+from filescan.problems import recorded, replace_tried
 from filescan.progress import SkipLog, progress_bar
 from filescan.storage import FileRepository, SQLiteDB
 
@@ -104,14 +105,20 @@ def hash_pc_files(db: SQLiteDB, config: ScanConfig, records: list[FileRecord]) -
     return counts
 
 
-def run_hash_all_for_config(config: ScanConfig, *, server_runner: HashRunner | None = None) -> dict:
+def run_hash_all_for_config(config: ScanConfig, *, server_runner: HashRunner | None = None,
+                            retry_unreadable: bool = False) -> dict:
     roots = root_configs(config)
     result = {"hashed": 0, "unreadable": 0, "changed": 0, "outside_roots": 0,
-              "server_hashed": 0, "server_stale": 0, "server_errors": 0}
+              "server_hashed": 0, "server_stale": 0, "server_errors": 0, "left_unreadable": 0}
     db = SQLiteDB(config.database_path)
     try:
         masters = [r.path for r in roots if r.role == "master"]
         records = FileRepository(db).files_without_full_hash(skip_roots=masters)
+        if not retry_unreadable:
+            unreadable = recorded(db, "hash")
+            kept = [r for r in records if str(r.path) not in unreadable]
+            result["left_unreadable"] = len(records) - len(kept)
+            records = kept
         pc, server = [], []
         for record in records:
             root = root_for(str(record.path), roots)
@@ -127,6 +134,9 @@ def run_hash_all_for_config(config: ScanConfig, *, server_runner: HashRunner | N
         gb = lambda rs: sum(r.size for r in rs) / 1e9  # noqa: E731
         print(f"{len(pc):,} PC files ({gb(pc):,.1f} GB) and {len(server):,} server files "
               f"({gb(server):,.1f} GB) have no full hash.")
+        if result["left_unreadable"]:
+            print(f"{result['left_unreadable']:,} files that could not be read before are left out "
+                  "(on the Unreadable sheet; --retry-unreadable tries them again).")
         if result["outside_roots"]:
             print(f"{result['outside_roots']:,} files are under no configured root and are left alone.")
         if pc:
@@ -151,5 +161,5 @@ def run_hash_all_for_config(config: ScanConfig, *, server_runner: HashRunner | N
     return result
 
 
-def run_hash_all(config_path) -> dict:
-    return run_hash_all_for_config(load_config(config_path))
+def run_hash_all(config_path, *, retry_unreadable: bool = False) -> dict:
+    return run_hash_all_for_config(load_config(config_path), retry_unreadable=retry_unreadable)

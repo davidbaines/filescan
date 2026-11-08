@@ -21,7 +21,8 @@ poetry install                                   # install dependencies
 # repository root (copy .env.example). There is no built-in default. With no command,
 # filescan prints the help, grouped by stage.
 filescan status                                  # where the work stands and what to run next (reads only)
-filescan scan [--rescan]                         # the whole inventory, then report; repeat scans read only changed folders unless --rescan
+filescan scan [--rescan] [--retry-unreadable]    # the whole inventory, then report; repeat scans read only changed folders unless --rescan;
+                                                 # items that could not be read before are left out unless --retry-unreadable
 #   the single steps, for when only one is needed (not in README.md):
 #   filescan scan-pc | import-server | hash-all
 filescan retire-drive "LaCie Quadra"             # mark a drive that has gone for good as missing (database only)

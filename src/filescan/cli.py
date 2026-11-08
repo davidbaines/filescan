@@ -100,14 +100,19 @@ def build_parser() -> argparse.ArgumentParser:
     def add(name: str) -> argparse.ArgumentParser:
         return subparsers.add_parser(name, help=HELP[name], description=HELP[name], prog=f"filescan {name}")
 
-    for name in ("status", "import-server", "hash-all", "report", "build-plan"):
+    for name in ("status", "import-server", "report", "build-plan"):
         add(name)
+
+    retry_help = ("Try again the files and folders that could not be read before. Without it they are left "
+                  "out, and stay on the workbook's Unreadable sheet.")
+    add("hash-all").add_argument("--retry-unreadable", action="store_true", help=retry_help)
 
     for name in ("scan", "scan-pc"):
         scan = add(name)
         scan.add_argument("--rescan", action="store_true",
                           help="Read every PC folder again. Without it, a root scanned before is updated quickly: "
                           "only folders whose date has changed are read, which misses files edited in place.")
+        scan.add_argument("--retry-unreadable", action="store_true", help=retry_help)
 
     review = add("review")
     review.add_argument("scope", nargs="?", default=None, help="Name of a delete-candidate exclusion rule.")
@@ -187,15 +192,16 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             db.close()
     elif command == "scan":
-        failed = run_full_scan(args.config, rescan=args.rescan, delta=not args.rescan)
+        failed = run_full_scan(args.config, rescan=args.rescan, delta=not args.rescan,
+                               retry_unreadable=args.retry_unreadable)
         return 1 if failed else 0
     elif command == "scan-pc":
         check_db_space(config)
-        run_scan(args.config, rescan=args.rescan, delta=not args.rescan)
+        run_scan(args.config, rescan=args.rescan, delta=not args.rescan, retry_unreadable=args.retry_unreadable)
     elif command == "import-server":
         run_import_server(args.config)
     elif command == "hash-all":
-        run_hash_all(args.config)
+        run_hash_all(args.config, retry_unreadable=args.retry_unreadable)
     elif command == "report":
         return 1 if run_reports(args.config).failed else 0
     elif command == "review":
