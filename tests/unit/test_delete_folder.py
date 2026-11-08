@@ -127,23 +127,6 @@ def test_refuses_a_folder_reached_through_a_junction_above_it(tmp_path):
     assert (pc / "Live" / "Inner" / "keep.txt").read_bytes() == b"must survive"
 
 
-def test_ownership_fixer_refuses_targets_reached_through_a_link_or_on_c(tmp_path):
-    from filescan.cleanup.delete_folder import OwnershipFixer, UnsafeTarget
-
-    (tmp_path / "real").mkdir()
-    link = tmp_path / "link"
-    made = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(tmp_path / "real")], capture_output=True)
-    if made.returncode != 0:
-        pytest.skip(f"could not create a junction: {made.stderr!r}")
-    (tmp_path / "real" / "sub").mkdir()
-    fixer = OwnershipFixer()
-    fixer._run = lambda args: pytest.fail(f"must not run {args}")
-    with pytest.raises(UnsafeTarget):
-        fixer.folder(str(link / "sub"))
-    with pytest.raises(UnsafeTarget):
-        fixer.folder(r"C:\Users\Public\Documents")
-
-
 def test_a_read_only_folder_is_removed(tmp_path):
     import os
     import stat
@@ -153,3 +136,10 @@ def test_a_read_only_folder_is_removed(tmp_path):
     os.chmod(folder, stat.S_IREAD)
     run_delete_folder(config, [str(pc / "Old" / "profile")], yes=True)
     assert not (pc / "Old" / "profile").exists()
+
+
+def test_delete_folder_never_changes_permissions():
+    import filescan.cleanup.delete_folder as module
+    source = Path(module.__file__).read_text(encoding="utf-8")
+    assert "takeown" not in source and "icacls" not in source and "subprocess" not in source
+    assert not hasattr(module, "OwnershipFixer")

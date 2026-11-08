@@ -21,10 +21,9 @@ Safety:
 - Junctions and symbolic links are removed as links. filescan never goes
   through them, because an old Windows profile has junctions that point into
   the live profile on C:.
-- --take-ownership changes permissions only on items filescan has checked are
-  real files and folders, one folder at a time and never recursively, so a
-  link's target is never touched. It is refused on C: and needs an elevated
-  terminal.
+- A folder reached through a junction or link above it is refused.
+- filescan never changes permissions. Anything it cannot delete is logged and
+  appears on the workbook's Unreadable sheet for the user to deal with.
 
 Each run with --yes writes <filescan folder>/deletions/<time>.jsonl: one
 record per folder, plus one per file or folder that could not be removed.
@@ -33,11 +32,9 @@ record per folder, plus one per file or folder that could not be removed.
 from __future__ import annotations
 
 import csv
-import ctypes
 import json
 import os
 import stat
-import subprocess
 from collections import Counter
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -105,10 +102,6 @@ def leads_elsewhere(path: str) -> bool:
         return True  # if we cannot tell, treat it as leading elsewhere
 
 
-class UnsafeTarget(RuntimeError):
-    """A permission change was asked for on C: or through a link. Everything stops; nothing is changed."""
-
-
 # ---------------------------------------------------------------- walking
 
 
@@ -120,25 +113,12 @@ class Item:
     error: str = ""
 
 
-def walk(top: str, fixer: "OwnershipFixer | None" = None) -> Iterator[Item]:
+def walk(top: str) -> Iterator[Item]:
     """Every file, link and folder below `top`, children before their folder. Never goes through a link.
 
-    With a fixer, a folder that cannot be listed has its ownership and
-    permissions reset, and the listing is tried once more.
     """
     try:
         entries = list(os.scandir(top))
-    except PermissionError as exc:
-        if fixer is None or not fixer.folder(top):
-            yield Item("error", top, error=str(exc))
-            return
-        try:
-            entries = list(os.scandir(top))
-        except OSError as exc2:
-            yield Item("error", top, error=str(exc2))
-            return
-        if not any(_is_link(e) for e in entries):
-            fixer.children(top)  # safe: nothing directly inside is a link
     except OSError as exc:
         yield Item("error", top, error=str(exc))
         return
@@ -152,7 +132,7 @@ def walk(top: str, fixer: "OwnershipFixer | None" = None) -> Iterator[Item]:
             yield Item("error", entry.path, error=str(exc))
             continue
         if is_dir:
-            yield from walk(entry.path, fixer)
+            yield from walk(entry.path)
         else:
             try:
                 size = entry.stat(follow_symlinks=False).st_size
@@ -178,81 +158,13 @@ def remove_file(path: str) -> None:
         os.remove(path)
 
 
-def remove_folder(path: str, fixer: "OwnershipFixer | None" = None) -> None:
-    """Remove an empty folder: clear its read-only attribute if needed, then fix its permissions if allowed."""
+def remove_folder(path: str) -> None:
+    """Remove an empty folder, clearing its read-only attribute if needed."""
     try:
         os.rmdir(path)
-        return
-    except FileNotFoundError:
-        raise
     except PermissionError:
         os.chmod(path, stat.S_IWRITE)
-    try:
         os.rmdir(path)
-    except PermissionError:
-        if fixer is None:
-            raise
-        fixer.folder(path)
-        os.rmdir(path)
-
-
-# ---------------------------------------------------------------- permissions
-
-
-def is_elevated() -> bool:
-    try:
-        return bool(ctypes.windll.shell32.IsUserAnAdmin())
-    except (AttributeError, OSError):
-        return False
-
-
-class OwnershipFixer:
-    """Take ownership of one folder, and of the items directly in it, without recursing."""
-
-    def __init__(self) -> None:
-        self.fixed: set[str] = set()
-        self.runs = 0
-
-    def _run(self, args: list[str]) -> None:
-        self.runs += 1
-        subprocess.run(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-
-    @staticmethod
-    def _guard(path: str) -> str:
-        """The plain path, after checking it is on no link and not on C:. Raises UnsafeTarget otherwise.
-
-        Checked again immediately before every takeown and icacls, whatever the
-        caller checked earlier: on 6 November a recursive permission reset went
-        through old-profile junctions into C:.
-        """
-        plain = short_path(path).rstrip("\\")
-        if leads_elsewhere(plain):
-            raise UnsafeTarget(f"{plain} leads through a junction or link to {real_location(plain)}")
-        if plain[:2].upper() == "C:" or real_location(plain)[:2].upper() == "C:":
-            raise UnsafeTarget(f"{plain} is on C:, where permissions are never changed")
-        return plain
-
-    def folder(self, folder: str) -> bool:
-        """Fix one folder (checked not to be a link) so it can be listed. False if already tried."""
-        plain = self._guard(folder)
-        key = plain.lower()
-        if key in self.fixed:
-            return False
-        self.fixed.add(key)
-        self._run(["takeown", "/f", plain])
-        self._run(["icacls", plain, "/reset", "/c", "/q"])
-        return True
-
-    def children(self, folder: str) -> None:
-        """Fix the items directly in a folder, not below. Only call it when none of them is a link."""
-        pattern = self._guard(folder) + "\\*"
-        self._run(["takeown", "/f", pattern])
-        self._run(["icacls", pattern, "/reset", "/c", "/q"])
-
-    def file(self, path: str) -> None:
-        plain = self._guard(path)
-        self._run(["takeown", "/f", plain])
-        self._run(["icacls", plain, "/reset", "/c", "/q"])
 
 
 # ---------------------------------------------------------------- checks and the report
@@ -386,7 +298,7 @@ def print_report(reports: list[FolderReport]) -> None:
             print(f"    {r.new_files:,} files ({gb(r.new_bytes)}) are not in the database, so they have never "
                   "been compared with anything")
         if r.unreadable:
-            print(f"    {r.unreadable:,} folders could not be read (permissions); --take-ownership can fix that")
+            print(f"    {r.unreadable:,} folders could not be read (permissions); filescan cannot delete them")
         if r.links:
             print(f"  {len(r.links):,} junctions or links inside. Only the links are removed, never what they "
                   f"point to. First: {r.links[0]}")
@@ -423,20 +335,14 @@ class _Log:
         self.handle.close()
 
 
-def delete_tree(top: str, log: _Log, fixer: OwnershipFixer | None = None) -> Counter:
+def delete_tree(top: str, log: _Log) -> Counter:
     """Delete everything below top, then top. Never goes through a link. Returns counts."""
     counts: Counter = Counter()
     with progress_bar(desc=f"deleting {short_path(top)}", unit="file") as bar:
-        for item in walk(top, fixer):
+        for item in walk(top):
             try:
                 if item.kind == "file":
-                    try:
-                        remove_file(item.path)
-                    except PermissionError:
-                        if fixer is None:
-                            raise
-                        fixer.file(item.path)
-                        remove_file(item.path)
+                    remove_file(item.path)
                     counts["files"] += 1
                     counts["bytes"] += item.size
                     bar.update(1)
@@ -444,7 +350,7 @@ def delete_tree(top: str, log: _Log, fixer: OwnershipFixer | None = None) -> Cou
                     remove_link(item.path)
                     counts["links"] += 1
                 elif item.kind == "dir":
-                    remove_folder(item.path, fixer)
+                    remove_folder(item.path)
                     counts["folders"] += 1
                 else:
                     counts["unreadable"] += 1
@@ -475,8 +381,7 @@ def mark_deleted(db: SQLiteDB, path: str, entries: list[PlanEntry]) -> int:
     return len(gone)
 
 
-def run_delete_folder(config: ScanConfig, folders: list[str], *, yes: bool = False,
-                      take_ownership: bool = False) -> list[FolderReport]:
+def run_delete_folder(config: ScanConfig, folders: list[str], *, yes: bool = False) -> list[FolderReport]:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     out_dir = config.filescan_folder / "deletions"
     db = SQLiteDB(config.database_path)
@@ -491,20 +396,12 @@ def run_delete_folder(config: ScanConfig, folders: list[str], *, yes: bool = Fal
             print(f"\nNothing was deleted. To delete {'this folder' if len(allowed) == 1 else 'these folders'} "
                   "for good (no quarantine, no Recycle Bin), run the same command with --yes.")
             return reports
-        fixer = None
-        if take_ownership:
-            if any(r.path[:2].upper() == "C:" or real_location(r.path)[:2].upper() == "C:" for r in allowed):
-                raise SystemExit("--take-ownership is never used on C:. Nothing was deleted.")
-            if not is_elevated():
-                raise SystemExit("--take-ownership needs an elevated terminal (Run as administrator). "
-                                 "Nothing was deleted.")
-            fixer = OwnershipFixer()
         log = _Log(out_dir / f"{stamp}.jsonl")
         try:
             for r in allowed:
                 counts: Counter = Counter()
                 if r.exists:
-                    counts = delete_tree(long_path(r.path), log, fixer)
+                    counts = delete_tree(long_path(r.path), log)
                 marked = mark_deleted(db, r.path, r.entries)
                 gone = not os.path.lexists(long_path(r.path))
                 log.write({"kind": "folder", "path": r.path, "deleted_files": counts["files"],
@@ -515,8 +412,8 @@ def run_delete_folder(config: ScanConfig, folders: list[str], *, yes: bool = Fal
                       f"{counts['links']:,} links; {marked:,} files marked missing in the database.")
                 if not gone:
                     print(f"  {counts['errors'] + counts['unreadable']:,} items could not be removed; see "
-                          f"{log.handle.name}. Run the command again with --take-ownership from an elevated "
-                          "terminal to finish.")
+                          f"{log.handle.name}. They are listed on the workbook's Unreadable sheet "
+                          "after the next scan; delete them or make them readable yourself.")
         finally:
             log.close()
         return reports

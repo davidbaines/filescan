@@ -138,9 +138,6 @@ def build_parser() -> argparse.ArgumentParser:
     df = add("delete-folder")
     df.add_argument("folders", nargs="+", help="PC folders to delete, each with everything below it.")
     df.add_argument("--yes", action="store_true", help="Really delete. Without it, only report what would go.")
-    df.add_argument("--take-ownership", action="store_true",
-                    help="First take ownership and reset permissions on each folder, one folder at a time. Needs an "
-                    "elevated terminal; never allowed on C:.")
     return parser
 
 
@@ -218,7 +215,7 @@ def main(argv: list[str] | None = None) -> int:
         run_cleanup_purge(args.config, args.plan, older_than_days=args.older_than_days, yes=args.yes,
                           only=args.only, reason=args.reason)
     elif command == "delete-folder":
-        run_delete_folder(config, args.folders, yes=args.yes, take_ownership=args.take_ownership)
+        run_delete_folder(config, args.folders, yes=args.yes)
     elif command == "build-plan":
         run_build_plan(args.config)
     return 0
