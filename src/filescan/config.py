@@ -164,7 +164,7 @@ def _parse_exclusions(raw: Any) -> tuple[ExclusionRule, ...]:
 
 def load_config(config_path: str | Path) -> ScanConfig:
     path = Path(config_path)
-    payload = yaml.safe_load(path.read_text()) or {}
+    payload = yaml.safe_load(path.read_text(encoding="utf-8-sig")) or {}  # filescan writes UTF-8
     data = _require_mapping(payload, message="Config file must contain a mapping.")
 
     roots_raw = data.get("roots")

@@ -171,7 +171,7 @@ def _new_map(values: dict):
 
 def save_config(config_path: Path, doc) -> Path:
     """Write config.yml, keeping a copy of the previous version. Returns the copy's path."""
-    original = config_path.read_text(encoding="utf-8")
+    original = config_path.read_text(encoding="utf-8-sig")
     out = io.StringIO()
     _yaml().dump(doc, out)
     backup = config_path.with_name(f"{config_path.name}.bak-{datetime.now():%Y%m%d-%H%M%S}")
@@ -305,6 +305,7 @@ class DriveCheck:
     left_for_later: list[str] = field(default_factory=list)
     backup: Path | None = None
     asked: bool = False  # False when scan was not run in a terminal, so new drives could not be asked about
+    table_printed: bool = False  # printed before asking about new drives
 
 
 def check_drives(config_path: Path, *, letters=None, details=None, ask: Ask | None | bool = True,
@@ -314,7 +315,7 @@ def check_drives(config_path: Path, *, letters=None, details=None, ask: Ask | No
     if ask is True:
         ask = _default_ask()
     config = load_config(config_path)
-    doc = _yaml().load(config_path.read_text(encoding="utf-8"))
+    doc = _yaml().load(config_path.read_text(encoding="utf-8-sig"))
     roots = doc.get("roots") or []
     ignored = doc.get("ignored_drives")
     ignored_list = list(ignored) if ignored else []
@@ -326,6 +327,7 @@ def check_drives(config_path: Path, *, letters=None, details=None, ask: Ask | No
     changed = False
     used_ignored: set[int] = set()
     new_roots, new_ignored = [], []
+    pending: list[tuple[int, Attached, str | None]] = []  # new drives: row, drive, root already on its letter
 
     def root_entries(letter: str):
         return [r for r in roots if hasattr(r, "get") and str(r.get("location", "pc")) == "pc"
@@ -356,10 +358,27 @@ def check_drives(config_path: Path, *, letters=None, details=None, ask: Ask | No
             result.rows.append(_row(drive, name, "ignored"))
             continue
         taken = here[0].name or str(here[0].path) if here else None
+        pending.append((len(result.rows), drive, taken))
+        result.rows.append(_row(drive, "-", "new"))
+
+    for rc in pc_roots:
+        problem = problems[id(rc)]
+        if _letter(rc.path) not in attached_letters and (problem is None or " now" not in problem):
+            result.not_attached.append(describe(rc))
+        elif problem is not None:
+            result.problems.append(problem)  # a different drive on its letter, or the drive on another letter
+    for i, entry in enumerate(ignored_list):
+        if i not in used_ignored and hasattr(entry, "get"):
+            result.not_attached.append(f"{entry.get('name')} ({entry.get('letter', '?')}, ignored)")
+    result.asked = bool(ask)
+
+    if pending and ask:
+        print_table(result)  # what is attached and what is not, before any question
+        result.table_printed = True
+    for row_index, drive, taken in pending:
         answer = _ask_new(drive, ask, taken) if ask else None
         if answer is None:
             result.left_for_later.append(drive.letter)
-            result.rows.append(_row(drive, "-", "new, not in config.yml"))
             continue
         name, use = answer
         values = {"name": name, **drive.details()}
@@ -369,11 +388,11 @@ def check_drives(config_path: Path, *, letters=None, details=None, ask: Ask | No
                                        **drive.details()}))
             result.messages.append(f"{name} ({drive.letter}): added to roots, to be scanned; "
                                    f"marker written at {drive.letter}\\.filescan-volume.yaml.")
-            result.rows.append(_row(drive, name, "scanned (new)"))
+            result.rows[row_index] = _row(drive, name, "scanned (new)")
         else:
             new_ignored.append(_new_map({"name": name, "letter": drive.letter, **values}))
             result.messages.append(f"{name} ({drive.letter}): added to ignored_drives; it is never scanned.")
-            result.rows.append(_row(drive, name, "ignored (new)"))
+            result.rows[row_index] = _row(drive, name, "ignored (new)")
         changed = True
 
     if new_roots:
@@ -388,17 +407,6 @@ def check_drives(config_path: Path, *, letters=None, details=None, ask: Ask | No
                 doc.yaml_set_comment_before_after_key(following[position + 1], before="\n")
         else:
             ignored.extend(new_ignored)
-
-    for rc in pc_roots:
-        problem = problems[id(rc)]
-        if _letter(rc.path) not in attached_letters and (problem is None or " now" not in problem):
-            result.not_attached.append(describe(rc))
-        elif problem is not None:
-            result.problems.append(problem)  # a different drive on its letter, or the drive on another letter
-    for i, entry in enumerate(ignored_list):
-        if i not in used_ignored and hasattr(entry, "get"):
-            result.not_attached.append(f"{entry.get('name')} ({entry.get('letter', '?')}, ignored)")
-    result.asked = bool(ask)
 
     if changed:
         result.backup = save_config(config_path, doc)
@@ -445,7 +453,8 @@ def _record(config, drives: list[Attached], db) -> None:
         print(f"(Could not record the drives in the database: {exc})")
 
 
-def print_check(result: DriveCheck) -> None:
+def print_table(result: DriveCheck) -> None:
+    """The connected drives, then the ones in config.yml that are not attached, and any problems."""
     headers = ("Drive", "Name", "In config.yml", "Label", "Model", "Size", "Free")
     rows = result.rows
     widths = [max(len(h), *(len(r[i]) for r in rows)) if rows else len(h) for i, h in enumerate(headers)]
@@ -455,6 +464,11 @@ def print_check(result: DriveCheck) -> None:
         print("\nNot attached: " + "; ".join(result.not_attached))
     for problem in result.problems:
         print(f"\nPROBLEM: {problem}")
+
+
+def print_check(result: DriveCheck) -> None:
+    if not result.table_printed:
+        print_table(result)
     if result.messages:
         print()
         for message in result.messages:

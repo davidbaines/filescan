@@ -126,3 +126,12 @@ def test_outside_a_terminal_a_new_drive_is_listed_and_config_is_unchanged(tmp_pa
     assert result.left_for_later == [C] and not result.asked
     assert config_path.read_text(encoding="utf-8") == before
     assert {n.split(" (")[0] for n in result.not_attached} == {"Disk X", "LaCie Quadra"}
+
+
+def test_a_name_with_accents_is_saved_and_read_back_unchanged(tmp_path, monkeypatch):
+    from filescan.config import load_config
+
+    k = _drive(C, "AB12-CD34", "Fotos", 2_000_000_000_000)
+    config_path = _setup(tmp_path, monkeypatch, [k])
+    _check(config_path, ["Álbum de Évelyn", "s"])
+    assert [rc.name for rc in load_config(config_path).pc_root_configs][-1] == "Álbum de Évelyn"
