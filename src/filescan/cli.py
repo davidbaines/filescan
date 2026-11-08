@@ -7,6 +7,7 @@ from filescan.cleanup.delete_folder import run_delete_folder
 from filescan.cleanup.plan import run_cleanup_plan
 from filescan.cleanup.quarantine import run_cleanup, run_cleanup_purge, run_cleanup_restore
 from filescan.config import ConfigNotSet, load_config, resolve_config_path
+from filescan.console import disable_quick_edit
 from filescan.dedupe.hash_all import run_hash_all
 from filescan.inventory.full_scan import run_full_scan
 from filescan.inventory.preflight import check_db_space, check_stale_roots
@@ -163,6 +164,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command is None:
         parser.print_help()
         return 0
+    disable_quick_edit()  # a click in the window would otherwise pause the run until a key is pressed
     try:
         args.config, args.config_source = resolve_config_path(args.config)
     except ConfigNotSet as exc:

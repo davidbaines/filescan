@@ -22,6 +22,7 @@ finishes the job.
 
 from __future__ import annotations
 
+import time
 import traceback
 from pathlib import Path
 
@@ -34,10 +35,16 @@ from filescan.inventory.drive_check import check_drives, print_check
 from filescan.reporting.report import print_written, run_reports_for_config
 
 
+def _duration(seconds: float) -> str:
+    minutes, seconds = divmod(round(seconds), 60)
+    return f"{minutes}m {seconds:02d}s" if minutes else f"{seconds}s"
+
+
 def run_full_scan(config_path: str | Path, *, rescan: bool = False, delta: bool = False) -> list[str]:
     """Run every inventory step. Returns the names of the steps that failed."""
     print("=== Drives ===")
     failed: list[str] = []
+    started = time.monotonic()
     try:
         print_check(check_drives(Path(config_path)))
     except SystemExit:
@@ -46,6 +53,7 @@ def run_full_scan(config_path: str | Path, *, rescan: bool = False, delta: bool 
         failed.append("drives")
         print(f"The drive check failed: {exc}")
         traceback.print_exc(limit=3)
+    timings = [("drives", time.monotonic() - started)]
     config = load_config(config_path)  # read again: the check may have added a drive
     steps = []
     if config.pc_root_configs:
@@ -57,6 +65,7 @@ def run_full_scan(config_path: str | Path, *, rescan: bool = False, delta: bool 
 
     for number, (name, step) in enumerate(steps, 1):
         print(f"\n=== Step {number} of {len(steps)}: {name} ===")
+        step_started = time.monotonic()
         try:
             step()
         except SystemExit:
@@ -65,11 +74,16 @@ def run_full_scan(config_path: str | Path, *, rescan: bool = False, delta: bool 
             failed.append(name)
             print(f"{name} failed: {exc}")
             traceback.print_exc(limit=3)
+        timings.append((name, time.monotonic() - step_started))
     print("\n=== Reports ===")
+    reports_started = time.monotonic()
     notes = [f"The scan's {name} step failed, so these reports leave out what it would have added."
              for name in failed]
     report = run_reports_for_config(config, notes=notes)
     print_written(report)
+    timings.append(("reports", time.monotonic() - reports_started))
+    print("\nTime taken: " + ", ".join(f"{name} {_duration(seconds)}" for name, seconds in timings)
+          + f"; {_duration(time.monotonic() - started)} in all.")
 
     print()
     if failed:

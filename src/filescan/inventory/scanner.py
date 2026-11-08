@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -16,6 +17,7 @@ from filescan.progress import SkipLog, progress_bar
 from filescan.storage import FileRepository, SQLiteDB
 
 _MIN_FREE_DB_BYTES = 500 * 1024 * 1024  # 500 MB hard floor
+_COMMIT_SECONDS = 5  # how often a scan commits to the database
 
 
 def _is_link(entry: os.DirEntry) -> bool:
@@ -209,6 +211,7 @@ class InventoryScanner:
     def scan(self) -> int:
         db = SQLiteDB(self.config.database_path)
         repo = FileRepository(db)
+        repo.defer_commits = True  # committed every few seconds below: a crash loses at most that batch
         scan_run_id: int | None = None
         latest_scan_run_id = repo.latest_scan_run_id()
 
@@ -249,6 +252,7 @@ class InventoryScanner:
             indexed_folders = 0
             indexed_files = 0
             skipped_folders = 0
+            last_commit = time.monotonic()
             with progress_bar(desc=f"scan {root.name or root.drive}", total=folder_count, unit="folder") as bar:
                 self.skips.attach(bar)
                 with ThreadPoolExecutor(max_workers=self.config.worker_count) as pool:
@@ -264,6 +268,9 @@ class InventoryScanner:
                         for future in as_completed(futures):
                             folder, depth = futures[future]
                             result = future.result()
+                            if time.monotonic() - last_commit > _COMMIT_SECONDS:
+                                db.conn.commit()
+                                last_commit = time.monotonic()
                             if result.skipped:
                                 repo.promote_folder_and_files(folder, scan_run_id)
                                 skipped_folders += 1
@@ -295,6 +302,7 @@ class InventoryScanner:
                             queue.extend((subdir, depth + 1) for subdir in new_subdirs)
                             total_folders += len(new_subdirs)
                             bar.update(1)
+            db.conn.commit()
             if root_delta:
                 print(f"  {indexed_folders:,} folders read again, {skipped_folders:,} unchanged")
             repo.mark_missing_under_root(root, scan_run_id)

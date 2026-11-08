@@ -11,6 +11,13 @@ class FileRepository:
     def __init__(self, db: SQLiteDB) -> None:
         self.db = db
         self._folder_cache: dict[Path, int] = {}
+        # The scanner sets this and commits every few seconds. Committing after every folder makes the
+        # disk flush each one, which on a quick update with few changes takes most of the time.
+        self.defer_commits = False
+
+    def _commit(self) -> None:
+        if not self.defer_commits:
+            self.db.conn.commit()
 
     def begin_scan_run(self) -> int:
         cursor = self.db.conn.execute("INSERT INTO scan_runs DEFAULT VALUES")
@@ -65,7 +72,7 @@ class FileRepository:
                 folder.scan_run_id,
             ),
         )
-        self.db.conn.commit()
+        self._commit()
         folder_id = self.get_folder_id(folder.path)
         assert folder_id is not None
         return folder_id
@@ -113,7 +120,7 @@ class FileRepository:
                     file_record.attributes,
                 ),
             )
-        self.db.conn.commit()
+        self._commit()
 
     def mark_missing_under_root(self, root: Path, scan_run_id: int) -> None:
         exact, prefix = self._path_prefix(root)
@@ -150,7 +157,7 @@ class FileRepository:
                  AND scan_run_id < ?""",
             (scan_run_id, folder_str, scan_run_id),
         )
-        self.db.conn.commit()
+        self._commit()
 
     def upsert_scan_stats(
         self,
