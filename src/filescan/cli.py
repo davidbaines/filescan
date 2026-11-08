@@ -14,6 +14,7 @@ from filescan.inventory.scanner import run_scan
 from filescan.inventory.server_import import run_import_server
 from filescan.inventory.volumes import add_drive, retire_drive, run_drives
 from filescan.planning.build_plan import run_build_plan
+from filescan.planning.copy_master import run_copy_master
 from filescan.reporting.report import run_reports
 from filescan.review.app import run_review
 from filescan.status import run_status
@@ -42,6 +43,7 @@ COMMAND_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
     ]),
     ("4. Build the master on disk2", [
         ("build-plan", "Decide where each kept file goes in the organised layout (layout.yml). Copies nothing."),
+        ("copy-master", "Copy the latest build plan to disk2 and check every file by hash. Needs --yes to copy."),
     ]),
     ("The steps of scan, on their own (only when one step is needed)", [
         ("drives", "Show each PC root's drive, its volume serial number and whether the right drive is connected."),
@@ -54,9 +56,6 @@ COMMAND_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
 # Listed in the help so the whole process is visible, but not commands yet.
 PLANNED_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
     ("Planned, not built yet", [
-        ("similar-trees", "Folder trees whose files are contained in, or nearly the same as, another tree."),
-        ("copy-master", "Run a build plan's copies to disk2, verified by hash, keeping each file's date."),
-        ("verify-coverage", "Prove every kept file is in the master, by hash."),
         ("pc-plan", "Lay out F:, E: and D: to match the master: move on the same drive, copy the rest."),
     ]),
 ]
@@ -134,6 +133,9 @@ def build_parser() -> argparse.ArgumentParser:
     drives.add_argument("--name", help="Friendly name for --add, e.g. \"WD My Book Black\".")
     drives.add_argument("--retire", metavar="NAME", help="Mark every file of a drive that has gone for good as "
                         "missing, so it no longer counts as a copy. Changes only the database.")
+
+    cm = add("copy-master")
+    cm.add_argument("--yes", action="store_true", help="Really copy. Without it, only report what would be copied.")
 
     df = add("delete-folder")
     df.add_argument("folders", nargs="+", help="PC folders to delete, each with everything below it.")
@@ -218,6 +220,9 @@ def main(argv: list[str] | None = None) -> int:
         run_delete_folder(config, args.folders, yes=args.yes)
     elif command == "build-plan":
         run_build_plan(args.config)
+    elif command == "copy-master":
+        result = run_copy_master(args.config, yes=args.yes)
+        return 0 if not args.yes or result.get("complete") else 1
     return 0
 
 

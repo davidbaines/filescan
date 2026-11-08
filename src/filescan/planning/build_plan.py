@@ -486,7 +486,7 @@ def write_build_plan(plan: BuildPlan, config: ScanConfig, out_root: Path) -> Pat
             src = unc_to_posix(Path(i.source.path), src_root) if src_root else None
             if src is None:
                 continue
-            handle.write(json.dumps({"src": src, "dst": f"{master.server_path}/{i.dest}",
+            handle.write(json.dumps({"src": src, "dst": f"{master.server_path}/{i.dest}", "size": i.winner.size,
                                      "xxh128": i.winner.full_hash or None, "mtime": i.winner.mtime}) + "\n")
     master_unc = str(master.path).rstrip("\\") if master else ""
     csv_out("pc_copy.csv", ["src", "dst", "size", "mtime", "full_hash"],

@@ -79,14 +79,10 @@ The cleanup commands record every action in the plan folder, so an interrupted r
 
 | Command | What it does | Changes files? |
 |---|---|---|
-| `filescan build-plan` | Reads `layout.yml` and decides where each kept file goes. It keeps one copy of each content, choosing the location from the entry that comes first in `layout.yml`, keeps Git repositories whole, and renames clashing files `name_from_<source>.ext`. The plan goes to a new folder under `build\`, with lists of what is dropped, renamed and still unsorted, and its summary sheets go into the workbook. Only the two newest plans are kept, because each plan folder takes over 1 GB. | No |
+| `filescan build-plan` | Reads `layout.yml` and decides where each kept file goes. It keeps one copy of each content, choosing the location from the entry that comes first in `layout.yml`, and renames clashing files `name_from_<source>.ext`. Git repositories, and each subfolder of a folder listed under `keep_whole` in `layout.yml` (such as the Downloads folders), are kept complete. The plan goes to a new folder under `build\`, with lists of what is dropped, renamed and still unsorted, and its summary sheets go into the workbook. Only the two newest plans are kept, because each plan folder takes over 1 GB. | No |
+| `filescan copy-master --yes` | Copies the latest build plan to the master (disk2). Files already on the server are copied there by the server; the rest go from the PC over the network. Each copy is written under a temporary name, checked by hash where it lands, given the kept file's date and then renamed; an existing file is never overwritten. It ends by checking that every file in the plan is on disk2 with a matching hash, and lists any that are not in `not_on_master.csv`. Without `--yes` it only reports how much would be copied against disk2's free space. It can be stopped and run again. | **Copies** to disk2 with `--yes` |
 
-Still to be built, in this order:
-
-- `filescan similar-trees`: folder trees whose files are all contained in another tree, or nearly the same as one, for you to choose which copy to keep;
-- `filescan copy-master`: copy the build plan to the server's disk2, verified by hash, keeping each file's date;
-- `filescan verify-coverage`: prove by hash that every kept file is in the organised set;
-- `filescan pc-plan`: lay out the PC's drives to match, moving files on the same drive and copying the rest.
+Still to be built: `filescan pc-plan`, to lay out the PC's drives to match disk2, moving files on the same drive and copying the rest.
 
 After that, a plain mirror from the PC to disk2 keeps the server copy up to date.
 

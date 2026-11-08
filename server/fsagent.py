@@ -22,11 +22,14 @@ hash --input PATHS.jsonl --output HASHES.jsonl
     Paths already present in HASHES.jsonl are skipped, so a rerun resumes.
 
 copy --manifest MANIFEST.jsonl --log LOG.jsonl [--dry-run]
-    Each manifest line is {"src", "dst", "xxh128"}. A file is copied to
-    "<dst>.partial", flushed to disk, hashed again from disk, given the source
-    mtime, and only then renamed to dst. An existing dst is never overwritten:
-    a matching hash is logged as "exists", a different one as "conflict".
-    Entries already logged as "copied" or "exists" are skipped on a rerun.
+    Each manifest line is {"src", "dst", "xxh128", "mtime"}. A file is copied
+    to "<dst>.partial", flushed to disk, hashed again from disk, given the
+    manifest's mtime (the source's if there is none), and only then renamed to
+    dst. With no "xxh128", the source's hash as read during the copy is the one
+    the copy must match. An existing dst is never overwritten: a matching hash
+    is logged as "exists", a different one as "conflict". Each result carries
+    the hash checked. Entries already logged as "copied" or "exists" are
+    skipped on a rerun.
 
 move --manifest MANIFEST.jsonl --log LOG.jsonl
     Each manifest line is {"src", "dst", "size", "mtime", "stop"}. The file is
@@ -247,15 +250,17 @@ def _drop_cache(fd: int) -> None:
             pass
 
 
-def _copy_one(src: str, dst: str, expected: str) -> dict:
+def _copy_one(src: str, dst: str, expected: str | None, mtime: float | None = None) -> dict:
     """Copy src to dst with verification. Never overwrites an existing dst."""
     if os.path.lexists(dst):
         try:
             existing, _ = hash_file(dst)
+            if expected is None:
+                expected, _ = hash_file(src)
         except OSError as exc:
-            return {"status": "error", "error": f"cannot read existing destination: {exc}"}
+            return {"status": "error", "error": f"cannot read existing destination or source: {exc}"}
         if existing == expected:
-            return {"status": "exists"}
+            return {"status": "exists", "xxh128": existing}
         return {"status": "conflict", "error": f"destination exists with hash {existing}"}
 
     src_stat = os.stat(src, follow_symlinks=False)
@@ -272,6 +277,8 @@ def _copy_one(src: str, dst: str, expected: str) -> dict:
             writer.flush()
             os.fsync(writer.fileno())
             _drop_cache(writer.fileno())
+        if expected is None:
+            expected = digest.hexdigest()
         if digest.hexdigest() != expected:
             raise OSError(f"source hash {digest.hexdigest()} differs from expected {expected}")
         # Read back from disk, not from what we wrote, to catch write errors.
@@ -279,7 +286,8 @@ def _copy_one(src: str, dst: str, expected: str) -> dict:
         if written != expected:
             raise OSError(f"written copy hash {written} differs from expected {expected}")
         os.chmod(partial, stat.S_IMODE(src_stat.st_mode))
-        os.utime(partial, ns=(src_stat.st_atime_ns, src_stat.st_mtime_ns))
+        mtime_ns = round(mtime * 1e9) if mtime is not None else src_stat.st_mtime_ns
+        os.utime(partial, ns=(src_stat.st_atime_ns, mtime_ns))
         if os.path.lexists(dst):
             raise OSError("destination appeared during copy")
         os.rename(partial, dst)
@@ -289,7 +297,7 @@ def _copy_one(src: str, dst: str, expected: str) -> dict:
         except OSError:
             pass
         return {"status": "error", "error": str(exc)}
-    return {"status": "copied", "bytes": copied}
+    return {"status": "copied", "bytes": copied, "xxh128": expected}
 
 
 def cmd_copy(manifest_path: str, log_path: str, dry_run: bool) -> int:
@@ -309,7 +317,7 @@ def cmd_copy(manifest_path: str, log_path: str, dry_run: bool) -> int:
                 result = {"status": "would_copy"}
             else:
                 try:
-                    result = _copy_one(entry["src"], entry["dst"], entry["xxh128"])
+                    result = _copy_one(entry["src"], entry["dst"], entry.get("xxh128"), entry.get("mtime"))
                 except OSError as exc:
                     result = {"status": "error", "error": str(exc)}
             if result["status"] in ("error", "conflict"):

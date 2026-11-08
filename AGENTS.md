@@ -32,6 +32,7 @@ filescan cleanup-restore --plan DIR
 filescan cleanup-purge --plan DIR --yes          # delete quarantined files after 14 days
 filescan delete-folder "D:\Old" [--yes]          # report on whole PC folders; --yes deletes them
 filescan build-plan                              # where each kept file goes in the layout (layout.yml); copies nothing
+filescan copy-master [--yes]                     # copy the latest build plan to disk2 and check every file by hash
 
 poetry run pytest tests                          # run all tests
 poetry run pytest tests/unit/test_config.py      # one file
@@ -59,6 +60,7 @@ The live configuration and database are in `C:\filescan` (`config.yml`, `file_in
 | Reports | `reporting/report.py`, `reporting/xlsx.py`, `reporting/measure.py`, `reporting/exclusions.py`, `cleanup/unwanted.py`, `compare.py` | `run_reports_for_config` writes each report as CSV, then one workbook (standard library only); all read the database, and unwanted also stores its matches |
 | Cleanup | `cleanup/plan.py`, `cleanup/quarantine.py`, `cleanup/delete_folder.py` | Plan from review decisions and rules; quarantine on the same disk, restore, purge. Server files move through `fsagent move` and `fsagent remove` |
 | Build plan | `planning/layout.py`, `planning/build_plan.py` | `load_layout` reads and checks `layout.yml`; `build` keeps one copy of each content in layout order, keeps Git repositories whole and writes the manifest |
+| Copy to the master | `planning/copy_master.py` | `run_copy_master`: server copies by `fsagent copy`, PC copies over SMB, then every file checked by hash on the server; logs in the plan folder |
 | Status | `status.py` | What has been done and what to run next; reads only |
 
 **Data layer:** `storage/db.py` (`SQLiteDB`, WAL mode) and `storage/repositories.py` (`FileRepository`). The database is the single source of truth for restartability: stages check what has already been processed and skip it unless `--rescan` is given.
