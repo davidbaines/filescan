@@ -148,18 +148,76 @@ def test_full_hash_reports_each_chunk(tmp_path: Path) -> None:
     assert chunks == [1 << 20, 1 << 20, 5]
 
 
-def test_progress_bar_reaches_the_total_of_recorded_sizes(tmp_path: Path, monkeypatch) -> None:
-    """Chunks move the bar as they are read; a file that is unreadable or changed still counts as done."""
+
+
+def test_progress_bar_moves_during_a_read_and_never_passes_or_goes_back_from_its_total(tmp_path: Path, monkeypatch):
+    """The bar moves while a file is being read; a file that grows, or fails partway, counts as its recorded size."""
+    import time
+
     config = load_config(_pc_config(tmp_path, extra=3))
-    bars = []
+    docs = tmp_path / "pc" / "Docs"
+    sizes = {p.name: p.stat().st_size for p in docs.iterdir()}
+    bars, steps = [], []
     real_bar = hash_all.progress_bar
 
     def recording_bar(**kwargs):
         bar = real_bar(**kwargs)
+        real_update = bar.update
+
+        def update(n=1):
+            steps.append(n)
+            return real_update(n)
+
+        bar.update = update
         bars.append(bar)
         return bar
 
+    seen_part_of_n0 = []
+
+    def fake_full_hash(path: Path, progress=None) -> str:
+        if path.name == "edited.txt":
+            progress(10 * sizes["edited.txt"])  # grew while it was read
+        elif path.name == "unique.txt":
+            progress(5)
+            raise OSError("the disk went away partway through")
+        elif path.name == "n0.txt":
+            progress(50)
+            # Wait until every other file is done and the bar shows these 50 bytes of n0.txt.
+            bar = bars[-1]
+            expected = bar.total - (sizes["n0.txt"] - 50)
+            deadline = time.monotonic() + 5
+            while bar.n != expected and time.monotonic() < deadline:
+                time.sleep(0.05)
+            seen_part_of_n0.append(bar.n == expected)
+            progress(sizes["n0.txt"] - 50)
+        else:
+            progress(path.stat().st_size)
+        return "0" * 32
+
     monkeypatch.setattr(hash_all, "progress_bar", recording_bar)
+    monkeypatch.setattr(hash_all, "full_hash", fake_full_hash)
     run_hash_all_for_config(config)
     pc_bar = next(b for b in bars if b.desc.startswith("PC files hashed"))
-    assert pc_bar.total > 0 and pc_bar.n == pc_bar.total
+    assert seen_part_of_n0 == [True]
+    assert all(step > 0 for step in steps)
+    assert pc_bar.n == pc_bar.total
+
+
+def test_a_file_that_grows_counts_for_no_more_than_its_recorded_size() -> None:
+    bytes_read = hash_all._BytesRead()
+    counted, progress = bytes_read.counter(100)
+    progress(60)
+    progress(60)  # the file grew while it was read
+    progress(60)
+    assert (counted[0], bytes_read.total) == (100, 100)
+
+
+def test_stopping_ends_a_read_at_its_next_chunk() -> None:
+    import pytest
+
+    bytes_read = hash_all._BytesRead()
+    _, progress = bytes_read.counter(100)
+    progress(10)
+    bytes_read.stopping.set()
+    with pytest.raises(hash_all._Stopped):
+        progress(10)

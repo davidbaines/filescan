@@ -45,26 +45,43 @@ COMMIT_EVERY_SECONDS = 5.0
 BAR_REFRESH_SECONDS = 0.5
 
 
+class _Stopped(Exception):
+    """Raised inside a hashing thread to end its read early when hash-all is stopping."""
+
+
 class _BytesRead:
-    """Bytes read by the hashing threads, so the bar moves while a large file is being read."""
+    """Bytes read by the hashing threads, so the bar moves while a large file is being read.
+
+    Setting `stopping` makes every read in progress end at its next chunk, so
+    Ctrl+C does not wait for large files to be read to the end.
+    """
 
     def __init__(self) -> None:
         self.total = 0
+        self.stopping = threading.Event()
         self._lock = threading.Lock()
 
     def add(self, count: int) -> None:
         with self._lock:
             self.total += count
 
-    def counter(self) -> tuple[list[int], Callable[[int], None]]:
-        """A per-file tally and the callback full_hash calls after each chunk."""
-        tally = [0]
+    def counter(self, size: int) -> tuple[list[int], Callable[[int], None]]:
+        """A per-file count of bytes put on the bar, and the callback full_hash calls after each chunk.
+
+        A file counts for no more than its recorded size, so one that grows while
+        it is read cannot take the bar past its total.
+        """
+        counted = [0]
 
         def progress(count: int) -> None:
-            tally[0] += count
-            self.add(count)
+            if self.stopping.is_set():
+                raise _Stopped
+            step = min(count, size - counted[0])
+            if step > 0:
+                counted[0] += step
+                self.add(step)
 
-        return tally, progress
+        return counted, progress
 
 
 def _drive(record: FileRecord) -> str:
@@ -85,16 +102,15 @@ def hash_pc_files(db: SQLiteDB, config: ScanConfig, records: list[FileRecord]) -
     in_flight: dict[Future, tuple[str, FileRecord, list[int]]] = {}
     queued = {drive: 0 for drive in queues}
     bytes_read = _BytesRead()
-    shown = 0
     pending, last_commit = 0, time.monotonic()
 
     def top_up() -> None:
         for drive, queue in queues.items():
             while queue and queued[drive] < QUEUED_PER_DRIVE:
                 record = queue.pop()
-                tally, progress = bytes_read.counter()
+                counted, progress = bytes_read.counter(record.size)
                 hasher = partial(full_hash, progress=progress)
-                in_flight[pools[drive].submit(hash_if_unchanged, hasher, record)] = (drive, record, tally)
+                in_flight[pools[drive].submit(hash_if_unchanged, hasher, record)] = (drive, record, counted)
                 queued[drive] += 1
 
     try:
@@ -105,10 +121,10 @@ def hash_pc_files(db: SQLiteDB, config: ScanConfig, records: list[FileRecord]) -
             while in_flight:
                 done, _ = wait(in_flight, timeout=BAR_REFRESH_SECONDS, return_when=FIRST_COMPLETED)
                 for future in done:
-                    drive, record, tally = in_flight.pop(future)
+                    drive, record, counted = in_flight.pop(future)
                     queued[drive] -= 1
                     # A finished file counts as its recorded size, whether it was read in full, in part or not at all.
-                    bytes_read.add(record.size - tally[0])
+                    bytes_read.add(record.size - counted[0])
                     try:
                         digest = future.result()
                     except OSError as exc:
@@ -122,15 +138,14 @@ def hash_pc_files(db: SQLiteDB, config: ScanConfig, records: list[FileRecord]) -
                     repo.upsert_file_hash(int(record.id), full_hash=digest, commit=False)
                     counts["hashed"] += 1
                     pending += 1
-                total = bytes_read.total
-                if total != shown:
-                    bar.update(total - shown)
-                    shown = total
+                if bytes_read.total != bar.n:
+                    bar.update(bytes_read.total - bar.n)
                 if pending >= COMMIT_EVERY_ROWS or time.monotonic() - last_commit >= COMMIT_EVERY_SECONDS:
                     db.conn.commit()
                     pending, last_commit = 0, time.monotonic()
                 top_up()
     finally:
+        bytes_read.stopping.set()
         for pool in pools.values():
             pool.shutdown(cancel_futures=True)
         db.conn.commit()
