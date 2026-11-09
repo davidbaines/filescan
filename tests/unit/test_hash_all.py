@@ -138,3 +138,28 @@ def test_a_deleted_unreadable_file_drops_off_the_list_even_when_nothing_is_left_
     names = {Path(r[0]).name for r in db.conn.execute("SELECT path FROM access_problems")}
     assert "unique.txt" not in names and "edited.txt" in names
     db.close()
+
+
+def test_full_hash_reports_each_chunk(tmp_path: Path) -> None:
+    big = tmp_path / "big.bin"
+    big.write_bytes(b"x" * ((1 << 20) * 2 + 5))
+    chunks: list[int] = []
+    assert full_hash(big, progress=chunks.append) == full_hash(big)
+    assert chunks == [1 << 20, 1 << 20, 5]
+
+
+def test_progress_bar_reaches_the_total_of_recorded_sizes(tmp_path: Path, monkeypatch) -> None:
+    """Chunks move the bar as they are read; a file that is unreadable or changed still counts as done."""
+    config = load_config(_pc_config(tmp_path, extra=3))
+    bars = []
+    real_bar = hash_all.progress_bar
+
+    def recording_bar(**kwargs):
+        bar = real_bar(**kwargs)
+        bars.append(bar)
+        return bar
+
+    monkeypatch.setattr(hash_all, "progress_bar", recording_bar)
+    run_hash_all_for_config(config)
+    pc_bar = next(b for b in bars if b.desc.startswith("PC files hashed"))
+    assert pc_bar.total > 0 and pc_bar.n == pc_bar.total

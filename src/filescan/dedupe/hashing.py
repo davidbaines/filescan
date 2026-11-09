@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import xxhash
 
-def full_hash(path: Path) -> str:
+
+def full_hash(path: Path, progress: Callable[[int], None] | None = None) -> str:
+    """xxh128 of the whole file, read in 1 MB chunks; progress, if given, is called with each chunk's length."""
     digest = xxhash.xxh128()
     with path.open("rb") as handle:
         while chunk := handle.read(1 << 20):
             digest.update(chunk)
+            if progress is not None:
+                progress(len(chunk))
     return digest.hexdigest()
 
 
