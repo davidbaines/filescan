@@ -196,20 +196,23 @@ def test_progress_bar_moves_during_a_read_and_never_passes_or_goes_back_from_its
 
     monkeypatch.setattr(hash_all, "progress_bar", recording_bar)
     monkeypatch.setattr(hash_all, "full_hash", fake_full_hash)
-    run_hash_all_for_config(config)
+    result = run_hash_all_for_config(config)
+    assert (result["changed"], result["unreadable"]) == (1, 1)  # edited.txt grew; unique.txt failed
     pc_bar = next(b for b in bars if b.desc.startswith("PC files hashed"))
     assert seen_part_of_n0 == [True]
     assert all(step > 0 for step in steps)
     assert pc_bar.n == pc_bar.total
 
 
-def test_a_file_that_grows_counts_for_no_more_than_its_recorded_size() -> None:
+def test_a_file_that_grows_stops_being_read_once_it_passes_its_recorded_size() -> None:
+    import pytest
+
     bytes_read = hash_all._BytesRead()
     counted, progress = bytes_read.counter(100)
     progress(60)
-    progress(60)  # the file grew while it was read
-    progress(60)
-    assert (counted[0], bytes_read.total) == (100, 100)
+    with pytest.raises(hash_all._Grew):
+        progress(60)  # the file grew while it was read
+    assert (counted[0], bytes_read.total) == (60, 60)
 
 
 def test_stopping_ends_a_read_at_its_next_chunk() -> None:

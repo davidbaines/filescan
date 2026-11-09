@@ -49,11 +49,17 @@ class _Stopped(Exception):
     """Raised inside a hashing thread to end its read early when hash-all is stopping."""
 
 
+class _Grew(Exception):
+    """Raised inside a hashing thread when a file holds more than its recorded size: it changed since the scan."""
+
+
 class _BytesRead:
     """Bytes read by the hashing threads, so the bar moves while a large file is being read.
 
-    Setting `stopping` makes every read in progress end at its next chunk, so
-    Ctrl+C does not wait for large files to be read to the end.
+    Setting `stopping` makes every read in progress end after its next chunk,
+    so Ctrl+C does not wait for large files to be read to the end. A read that
+    is blocked inside the operating system (a drive that has stopped answering)
+    is not interrupted.
     """
 
     def __init__(self) -> None:
@@ -68,18 +74,19 @@ class _BytesRead:
     def counter(self, size: int) -> tuple[list[int], Callable[[int], None]]:
         """A per-file count of bytes put on the bar, and the callback full_hash calls after each chunk.
 
-        A file counts for no more than its recorded size, so one that grows while
-        it is read cannot take the bar past its total.
+        A file that grows past its recorded size has changed since the scan, so
+        its read ends there instead of going on to the end; the bar never passes
+        its total.
         """
         counted = [0]
 
         def progress(count: int) -> None:
             if self.stopping.is_set():
                 raise _Stopped
-            step = min(count, size - counted[0])
-            if step > 0:
-                counted[0] += step
-                self.add(step)
+            if count > size - counted[0]:
+                raise _Grew
+            counted[0] += count
+            self.add(count)
 
         return counted, progress
 
@@ -127,6 +134,8 @@ def hash_pc_files(db: SQLiteDB, config: ScanConfig, records: list[FileRecord]) -
                     bytes_read.add(record.size - counted[0])
                     try:
                         digest = future.result()
+                    except _Grew:
+                        digest = None
                     except OSError as exc:
                         skips.add("full hash", record.path, exc)
                         counts["unreadable"] += 1
